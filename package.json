@@ -9,10 +9,21 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@ai-sdk/openai": "^3.0.39",
+    "@crayonai/react-core": "^0.7.7",
+    "@crayonai/react-ui": "^0.9.16",
+    "@crayonai/stream": "^0.6.4",
+    "@radix-ui/react-dialog": "^1.1.15",
+    "@thesysai/genui-sdk": "^0.8.5",
+    "ai": "^6.0.114",
     "dotenv": "^17.3.1",
     "next": "14.2.35",
+    "openai": "^6.25.0",
     "react": "^18",
-    "react-dom": "^18"
+    "react-dom": "^18",
+    "zod": "^4.3.6",
+    "zod-to-json-schema": "^3.25.1",
+    "zustand": "^5.0.11"
   },
   "devDependencies": {
     "@types/node": "^20",
