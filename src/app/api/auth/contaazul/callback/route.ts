@@ -51,7 +51,12 @@ export async function GET(request: Request) {
         // In a real application, you would store this token securely (e.g., HTTP-only cookie, database)
         // For now, we'll set a basic cookie to know the user is authenticated on the frontend
 
-        const res = NextResponse.redirect(new URL('/dashboard', request.url));
+        // Get original host from headers to handle reverse proxies like EasyPanel
+        const host = request.headers.get('x-forwarded-host') || request.headers.get('host');
+        const protocol = request.headers.get('x-forwarded-proto') || 'http';
+        const baseUrl = host ? `${protocol}://${host}` : process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+
+        const res = NextResponse.redirect(new URL('/dashboard', baseUrl));
         res.cookies.set('contaazul_access_token', data.access_token, {
             httpOnly: true,
             secure: process.env.NODE_ENV === 'production',
