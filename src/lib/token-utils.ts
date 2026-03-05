@@ -4,7 +4,13 @@ const TOKEN_URL = process.env.CONTA_AZUL_TOKEN_URL || 'https://auth.contaazul.co
 const CLIENT_ID = process.env.CONTA_AZUL_CLIENT_ID;
 const CLIENT_SECRET = process.env.CONTA_AZUL_CLIENT_SECRET;
 
-export async function refreshContaAzulToken() {
+export interface TokenData {
+    accessToken: string;
+    refreshToken: string;
+    expiresIn: number;
+}
+
+export async function refreshContaAzulToken(): Promise<TokenData | null> {
     const cookieStore = cookies();
     const refreshToken = cookieStore.get('contaazul_refresh_token')?.value;
 

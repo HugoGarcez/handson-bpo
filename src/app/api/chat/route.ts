@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { refreshContaAzulToken } from '@/lib/token-utils';
+import { refreshContaAzulToken, TokenData } from '@/lib/token-utils';
 
 // Força renderização dinâmica (necessário para cookies() funcionar)
 export const dynamic = 'force-dynamic';
@@ -8,7 +8,7 @@ export const dynamic = 'force-dynamic';
 const CONTA_AZUL_API = 'https://api.contaazul.com';
 
 // Busca dados reais do Conta Azul usando o token Bearer autenticado
-async function fetchContaAzulData(token: string): Promise<{ context: string, newToken?: any }> {
+async function fetchContaAzulData(token: string): Promise<{ context: string, newToken?: TokenData | null }> {
     const today = new Date();
     const thirtyDaysAgo = new Date(today);
     thirtyDaysAgo.setDate(today.getDate() - 30);
@@ -16,7 +16,7 @@ async function fetchContaAzulData(token: string): Promise<{ context: string, new
     const dateTo = today.toISOString().split('T')[0];
 
     let currentToken = token;
-    let refreshedTokenData = null;
+    let refreshedTokenData: TokenData | null = null;
 
     const makeRequest = async (endpoint: string) => {
         const headers = {
