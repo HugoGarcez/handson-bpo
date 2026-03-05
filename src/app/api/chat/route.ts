@@ -7,6 +7,16 @@ export const dynamic = 'force-dynamic';
 
 const CONTA_AZUL_API = 'https://api.contaazul.com';
 
+// Interfaces para tipagem dos dados do Conta Azul
+interface FinancialItem {
+    value?: number;
+    balance?: number;
+}
+
+interface ApiResponseData {
+    data?: FinancialItem[];
+}
+
 // Busca dados reais do Conta Azul usando o token Bearer autenticado
 async function fetchContaAzulData(token: string): Promise<{ context: string, newToken?: TokenData | null }> {
     const today = new Date();
@@ -83,29 +93,33 @@ async function fetchContaAzulData(token: string): Promise<{ context: string, new
 
     // Processa Vendas
     if (results.vendas && typeof results.vendas === 'object') {
-        const items = (results.vendas as any).data || (Array.isArray(results.vendas) ? results.vendas : []);
-        const total = items.reduce((sum: number, v: any) => sum + (v.value || 0), 0);
+        const vendasData = results.vendas as ApiResponseData;
+        const items = vendasData.data || (Array.isArray(results.vendas) ? (results.vendas as FinancialItem[]) : []);
+        const total = items.reduce((sum: number, v: FinancialItem) => sum + (v.value || 0), 0);
         context += `📊 VENDAS (30 dias): ${items.length} transações | Total: R$ ${total.toFixed(2)}\n`;
     }
 
     // Processa Recebíveis
     if (results.contasReceber && typeof results.contasReceber === 'object') {
-        const items = (results.contasReceber as any).data || (Array.isArray(results.contasReceber) ? results.contasReceber : []);
-        const total = items.reduce((sum: number, v: any) => sum + (v.value || 0), 0);
+        const receberData = results.contasReceber as ApiResponseData;
+        const items = receberData.data || (Array.isArray(results.contasReceber) ? (results.contasReceber as FinancialItem[]) : []);
+        const total = items.reduce((sum: number, v: FinancialItem) => sum + (v.value || 0), 0);
         context += `💰 CONTAS A RECEBER: R$ ${total.toFixed(2)} (${items.length} pendentes)\n`;
     }
 
     // Processa Pagáveis
     if (results.contasPagar && typeof results.contasPagar === 'object') {
-        const items = (results.contasPagar as any).data || (Array.isArray(results.contasPagar) ? results.contasPagar : []);
-        const total = items.reduce((sum: number, v: any) => sum + (v.value || 0), 0);
+        const pagarData = results.contasPagar as ApiResponseData;
+        const items = pagarData.data || (Array.isArray(results.contasPagar) ? (results.contasPagar as FinancialItem[]) : []);
+        const total = items.reduce((sum: number, v: FinancialItem) => sum + (v.value || 0), 0);
         context += `📉 CONTAS A PAGAR: R$ ${total.toFixed(2)} (${items.length} pendentes)\n`;
     }
 
     // Processa Saldo
     if (results.contasFinanceiras && typeof results.contasFinanceiras === 'object') {
-        const items = (results.contasFinanceiras as any).data || (Array.isArray(results.contasFinanceiras) ? results.contasFinanceiras : []);
-        const total = items.reduce((sum: number, c: any) => sum + (c.balance || 0), 0);
+        const finData = results.contasFinanceiras as ApiResponseData;
+        const items = finData.data || (Array.isArray(results.contasFinanceiras) ? (results.contasFinanceiras as FinancialItem[]) : []);
+        const total = items.reduce((sum: number, c: FinancialItem) => sum + (c.balance || 0), 0);
         context += `🏦 SALDO TOTAL: R$ ${total.toFixed(2)}\n`;
     }
 
@@ -122,7 +136,7 @@ export async function POST(req: NextRequest) {
     try {
         const { messages } = await req.json();
         const cookieStore = cookies();
-        let token = cookieStore.get('contaazul_access_token')?.value;
+        const token = cookieStore.get('contaazul_access_token')?.value;
 
         let financialContext = 'O usuário não autenticou o Conta Azul.';
         let refreshedData = null;
