@@ -26,7 +26,7 @@ async function fetchContaAzulData(token: string): Promise<{ context: string, new
     const dateTo = today.toISOString().split('T')[0];
 
     let currentToken = token;
-    let refreshedTokenData: TokenData | null = null;
+    let refreshedTokenData: TokenData | undefined = undefined;
 
     const makeRequest = async (endpoint: string) => {
         const headers = {

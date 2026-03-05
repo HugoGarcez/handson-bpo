@@ -10,7 +10,7 @@ export interface RefreshResult {
     success: boolean;
     data?: TokenData;
     error?: string;
-    details?: any;
+    details?: unknown;
 }
 
 const TOKEN_URL = process.env.CONTA_AZUL_TOKEN_URL || 'https://auth.contaazul.com/oauth2/token';
