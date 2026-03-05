@@ -1,11 +1,10 @@
-import { streamText } from 'ai';
-import { createOpenAI } from '@ai-sdk/openai';
+import OpenAI from 'openai';
 import { cookies } from 'next/headers';
 
 export const runtime = 'edge';
 
-// Configura o TheSys API Key usando o helper map do vercel/ai
-const thesys = createOpenAI({
+// Usa a base_url oficial do painel de desenvolvedores do TheSys
+const client = new OpenAI({
     apiKey: process.env.THESYS_API_KEY || "missing-thesys-key",
     baseURL: "https://api.thesys.dev/v1/embed"
 });
@@ -14,15 +13,13 @@ export async function POST(req: Request) {
     try {
         const { messages } = await req.json();
 
-        // 1. Obter o token do Conta Azul injetado via Cookie no login
+        // Obter o token do Conta Azul injetado via Cookie no login
         const cookieStore = cookies();
         const token = cookieStore.get('contaazul_access_token')?.value;
 
         let financialContext = "O usuário ainda não conectou o Conta Azul ou o token expirou.";
 
         if (token) {
-            // Num cenário de produção real, faríamos as chamadas para api.contaazul.com/v1/sales etc.
-            // Simulando a extração dos dados reais via token (Unified System)
             financialContext = `
         DADOS FINANCEIROS CONTA AZUL DO USUÁRIO (Contexto Real Injetado):
         - Status da Conexão: Autenticado e Válido.
@@ -40,13 +37,25 @@ Aja como se você estivesse lendo o sistema financeiro do cliente em tempo real.
 CONTEXTO ATUAL DE DADOS:
 ${financialContext}`;
 
-        const result = await streamText({
-            model: thesys('gpt-4o'), // Usa o modelo roteado pela endpoint do TheSys
-            system: systemPrompt,
-            messages,
+        // Passa pelo thesys com streaming SSE nativo formato OpenAI
+        const response = await client.chat.completions.create({
+            model: "gpt-4o",
+            stream: true,
+            messages: [
+                { role: 'system', content: systemPrompt },
+                ...messages
+            ],
         });
 
-        return result.toTextStreamResponse();
+        // Encaminha a resposta exatamente no formato event-stream do thesys/openai
+        return new Response(response.toReadableStream(), {
+            headers: {
+                'Content-Type': 'text/event-stream',
+                'Connection': 'keep-alive',
+                'Cache-Control': 'no-cache, no-transform',
+            }
+        });
+
     } catch (error) {
         console.error("TheSys Chat API Error:", error);
         const errorMessage = error instanceof Error ? error.message : 'Erro ao comunicar com a IA.';
