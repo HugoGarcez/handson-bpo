@@ -13,7 +13,7 @@ export interface RefreshResult {
     details?: unknown;
 }
 
-const TOKEN_URL = process.env.CONTA_AZUL_TOKEN_URL || 'https://auth.contaazul.com/oauth2/token';
+const TOKEN_URL = process.env.CONTA_AZUL_TOKEN_URL || 'https://api.contaazul.com/oauth2/token';
 const CLIENT_ID = process.env.CONTA_AZUL_CLIENT_ID;
 const CLIENT_SECRET = process.env.CONTA_AZUL_CLIENT_SECRET;
 
