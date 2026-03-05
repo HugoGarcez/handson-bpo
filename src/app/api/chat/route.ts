@@ -1,7 +1,7 @@
 import { streamText } from 'ai';
 import { createOpenAI } from '@ai-sdk/openai';
 import { cookies } from 'next/headers';
-import { makeC1Response } from '@thesysai/genui-sdk/server';
+
 
 export const runtime = 'edge';
 
@@ -58,23 +58,7 @@ ${financialContext}`;
             messages: incomingMessages,
         });
 
-        const c1 = makeC1Response();
-
-        // Inicia a conversão do fluxo em background
-        (async () => {
-            try {
-                for await (const chunk of result.textStream) {
-                    await c1.writeContent(chunk);
-                }
-            } catch (e) {
-                console.error("TheSys stream generation error:", e);
-            } finally {
-                await c1.end();
-            }
-        })();
-
-        // Retorna a stream no formato proprietário que o C1Chat lê perfeitamente
-        return new Response(c1.responseStream, {
+        return result.toTextStreamResponse({
             headers: {
                 'Content-Type': 'text/event-stream',
                 'Connection': 'keep-alive',
