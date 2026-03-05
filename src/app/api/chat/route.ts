@@ -19,7 +19,7 @@ export async function POST(req: Request) {
             messages,
         });
 
-        return result.toDataStreamResponse();
+        return result.toTextStreamResponse();
     } catch (error) {
         console.error("TheSys Chat API Error:", error);
         const errorMessage = error instanceof Error ? error.message : 'Erro ao comunicar com a IA.';
