@@ -24,6 +24,8 @@ export async function GET(request: Request) {
         params.append('grant_type', 'authorization_code');
         params.append('code', code);
         params.append('redirect_uri', REDIRECT_URI!);
+        params.append('client_id', CLIENT_ID);
+        params.append('client_secret', CLIENT_SECRET);
 
         const response = await fetch(TOKEN_URL, {
             method: 'POST',
