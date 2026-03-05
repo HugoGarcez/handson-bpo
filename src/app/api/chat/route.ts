@@ -11,7 +11,21 @@ const client = new OpenAI({
 
 export async function POST(req: Request) {
     try {
-        const { messages } = await req.json();
+        const body = await req.json();
+        console.log("[DEBUG] /api/chat received body:", JSON.stringify(body, null, 2));
+
+        let incomingMessages = [];
+        if (body.messages && Array.isArray(body.messages)) {
+            incomingMessages = body.messages;
+        } else if (body.prompt) {
+            if (body.history && Array.isArray(body.history)) {
+                incomingMessages = [...body.history, body.prompt];
+            } else {
+                incomingMessages = [body.prompt];
+            }
+        } else if (Array.isArray(body)) {
+            incomingMessages = body;
+        }
 
         // Obter o token do Conta Azul injetado via Cookie no login
         const cookieStore = cookies();
@@ -43,7 +57,7 @@ ${financialContext}`;
             stream: true,
             messages: [
                 { role: 'system', content: systemPrompt },
-                ...messages
+                ...incomingMessages
             ],
         });
 
