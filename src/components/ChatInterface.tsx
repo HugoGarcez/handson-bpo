@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { C1Component } from '@thesysai/genui-sdk';
 import { ThemeProvider } from '@crayonai/react-ui';
+import SettingsMenu from './SettingsMenu';
 
 interface Message {
     id: string;
@@ -14,6 +15,7 @@ export default function ChatInterface() {
     const [messages, setMessages] = useState<Message[]>([]);
     const [input, setInput] = useState('');
     const [isLoading, setIsLoading] = useState(false);
+    const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -70,9 +72,22 @@ export default function ChatInterface() {
 
                 {/* Header */}
                 <div style={styles.header}>
-                    <h2>IA Financeira - Conta Azul</h2>
-                    <p>Seus dados financeiros vivos em tempo real.</p>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div>
+                            <h2 style={{ margin: 0 }}>IA Financeira - Conta Azul</h2>
+                            <p style={{ margin: '4px 0 0', opacity: 0.7 }}>Seus dados financeiros vivos em tempo real.</p>
+                        </div>
+                        <button
+                            onClick={() => setIsSettingsOpen(true)}
+                            style={styles.settingsBtn}
+                            title="Configurações de Conexão"
+                        >
+                            ⚙️
+                        </button>
+                    </div>
                 </div>
+
+                <SettingsMenu isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
 
                 {/* Message Area */}
                 <div style={styles.messagesContainer}>
@@ -204,5 +219,19 @@ const styles = {
         fontWeight: '600' as const,
         cursor: 'pointer',
         transition: 'background 0.2s',
+    },
+    settingsBtn: {
+        background: 'rgba(255, 255, 255, 0.05)',
+        border: '1px solid rgba(255, 255, 255, 0.1)',
+        borderRadius: '12px',
+        width: '44px',
+        height: '44px',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontSize: '1.2rem',
+        cursor: 'pointer',
+        transition: 'all 0.2s',
+        color: 'white',
     }
 };
