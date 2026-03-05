@@ -1,17 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import OpenAI from 'openai';
 
 // Força renderização dinâmica (necessário para cookies() funcionar)
 export const dynamic = 'force-dynamic';
 
-// Usa o cliente OpenAI direto (sem Vercel AI SDK) apontando para a TheSys
-const openai = new OpenAI({
-    apiKey: process.env.THESYS_API_KEY || 'missing-key',
-    baseURL: 'https://api.thesys.dev/v1/embed',
-});
-
 export async function POST(req: NextRequest) {
+    // Importação dinâmica do OpenAI para evitar problemas no build estático do Next.js
+    const OpenAI = (await import('openai')).default;
+
+    const openai = new OpenAI({
+        apiKey: process.env.THESYS_API_KEY || 'missing-key',
+        baseURL: 'https://api.thesys.dev/v1/embed',
+    });
+
     try {
         const { messages } = await req.json();
 
@@ -38,9 +39,9 @@ Aja como se estivesse lendo o sistema financeiro do cliente em tempo real.
 CONTEXTO ATUAL DE DADOS:
 ${financialContext}`;
 
-        // Stream diretamente usando a SDK da OpenAI compatível com TheSys
+        // Modelo TheSys confirmado via GET /v1/embed/models
         const stream = await openai.chat.completions.create({
-            model: 'c1-nightly',
+            model: 'c1/anthropic/claude-sonnet-4/v-20251230',
             stream: true,
             messages: [
                 { role: 'system', content: systemPrompt },
