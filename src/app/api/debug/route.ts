@@ -3,7 +3,7 @@ import { cookies } from 'next/headers';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET(req: NextRequest) {
+export async function GET() {
     const cookieStore = cookies();
     const token = cookieStore.get('contaazul_access_token')?.value;
     const allCookies = cookieStore.getAll().map(c => c.name);
