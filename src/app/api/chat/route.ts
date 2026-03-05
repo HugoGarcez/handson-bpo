@@ -13,20 +13,7 @@ const thesys = createOpenAI({
 
 export async function POST(req: Request) {
     try {
-        const body = await req.json();
-
-        let incomingMessages = [];
-        if (body.messages && Array.isArray(body.messages)) {
-            incomingMessages = body.messages;
-        } else if (body.prompt) {
-            if (body.history && Array.isArray(body.history)) {
-                incomingMessages = [...body.history, body.prompt];
-            } else {
-                incomingMessages = [body.prompt];
-            }
-        } else if (Array.isArray(body)) {
-            incomingMessages = body;
-        }
+        const { messages } = await req.json();
 
         // Obter o token do Conta Azul injetado via Cookie no login
         const cookieStore = cookies();
@@ -55,7 +42,7 @@ ${financialContext}`;
         const result = await streamText({
             model: thesys('gpt-4o'),
             system: systemPrompt,
-            messages: incomingMessages,
+            messages: messages,
         });
 
         return result.toTextStreamResponse({
