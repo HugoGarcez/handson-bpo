@@ -92,8 +92,13 @@ export default function ChatInterface() {
                                     color: m.role === 'user' ? 'white' : '#E2E8F0',
                                     maxWidth: m.role === 'user' ? '70%' : '100%'
                                 }}>
-                                    {/* TheSys GenUI C1Component magic happens here! */}
-                                    <C1Component c1Response={m.content} isStreaming={isLoading && m.role === 'assistant'} />
+                                    {m.role === 'user' ? (
+                                        // Mensagens do usuário: texto simples
+                                        <span style={{ whiteSpace: 'pre-wrap' }}>{m.content}</span>
+                                    ) : (
+                                        // Mensagens da IA: processadas pelo TheSys C1Component
+                                        <C1Component c1Response={m.content} isStreaming={isLoading} />
+                                    )}
                                 </div>
                             </div>
                         ))
