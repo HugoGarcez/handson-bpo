@@ -1,10 +1,12 @@
-import OpenAI from 'openai';
+import { streamText } from 'ai';
+import { createOpenAI } from '@ai-sdk/openai';
 import { cookies } from 'next/headers';
+import { makeC1Response } from '@thesysai/genui-sdk/server';
 
 export const runtime = 'edge';
 
 // Usa a base_url oficial do painel de desenvolvedores do TheSys
-const client = new OpenAI({
+const thesys = createOpenAI({
     apiKey: process.env.THESYS_API_KEY || "missing-thesys-key",
     baseURL: "https://api.thesys.dev/v1/embed"
 });
@@ -12,7 +14,6 @@ const client = new OpenAI({
 export async function POST(req: Request) {
     try {
         const body = await req.json();
-        console.log("[DEBUG] /api/chat received body:", JSON.stringify(body, null, 2));
 
         let incomingMessages = [];
         if (body.messages && Array.isArray(body.messages)) {
@@ -51,18 +52,29 @@ Aja como se você estivesse lendo o sistema financeiro do cliente em tempo real.
 CONTEXTO ATUAL DE DADOS:
 ${financialContext}`;
 
-        // Passa pelo thesys com streaming SSE nativo formato OpenAI
-        const response = await client.chat.completions.create({
-            model: "gpt-4o",
-            stream: true,
-            messages: [
-                { role: 'system', content: systemPrompt },
-                ...incomingMessages
-            ],
+        const result = await streamText({
+            model: thesys('gpt-4o'),
+            system: systemPrompt,
+            messages: incomingMessages,
         });
 
-        // Encaminha a resposta exatamente no formato event-stream do thesys/openai
-        return new Response(response.toReadableStream(), {
+        const c1 = makeC1Response();
+
+        // Inicia a conversão do fluxo em background
+        (async () => {
+            try {
+                for await (const chunk of result.textStream) {
+                    await c1.writeContent(chunk);
+                }
+            } catch (e) {
+                console.error("TheSys stream generation error:", e);
+            } finally {
+                await c1.end();
+            }
+        })();
+
+        // Retorna a stream no formato proprietário que o C1Chat lê perfeitamente
+        return new Response(c1.responseStream, {
             headers: {
                 'Content-Type': 'text/event-stream',
                 'Connection': 'keep-alive',
