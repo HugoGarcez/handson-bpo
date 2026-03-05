@@ -46,15 +46,8 @@ export default function ChatInterface() {
                     const { done, value } = await reader.read();
                     if (done) break;
 
-                    const chunk = decoder.decode(value, { stream: true });
-                    // Vercel AI toTextStreamResponse envia chunks no formato: 0:"texto"
-                    // Vamos tentar apenas injetar o raw se tiver as tags do C1 ou limpar as aspas
-                    let text = chunk.replace(/^0:"/, '').replace(/"\n$/, '');
-                    if (chunk.startsWith('0:')) {
-                        try {
-                            text = JSON.parse(chunk.substring(2));
-                        } catch { }
-                    }
+                    // API agora envia texto bruto direto
+                    const text = decoder.decode(value, { stream: true });
 
                     setMessages((prev) =>
                         prev.map(msg =>
