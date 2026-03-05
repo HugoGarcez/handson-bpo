@@ -140,7 +140,7 @@ export async function POST(req: NextRequest) {
         const token = cookieStore.get('contaazul_access_token')?.value;
 
         let financialContext = 'O usuário não autenticou o Conta Azul.';
-        let refreshedData = null;
+        let refreshedData: TokenData | undefined = undefined;
 
         if (token) {
             const result = await fetchContaAzulData(token);
