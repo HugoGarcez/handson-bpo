@@ -18,7 +18,7 @@ interface ApiResponseData {
 }
 
 // Busca dados reais do Conta Azul usando o token Bearer autenticado
-async function fetchContaAzulData(token: string): Promise<{ context: string, newToken?: TokenData | null }> {
+async function fetchContaAzulData(token: string): Promise<{ context: string, newToken?: TokenData }> {
     const today = new Date();
     const thirtyDaysAgo = new Date(today);
     thirtyDaysAgo.setDate(today.getDate() - 30);
@@ -39,9 +39,10 @@ async function fetchContaAzulData(token: string): Promise<{ context: string, new
         // Se der 401 e ainda não tentamos dar refresh nesta requisição
         if (response.status === 401 && !refreshedTokenData) {
             console.log(`[ContaAzul] 401 detected on ${endpoint}. Attempting token refresh...`);
-            refreshedTokenData = await refreshContaAzulToken();
+            const refreshResult = await refreshContaAzulToken();
 
-            if (refreshedTokenData) {
+            if (refreshResult.success && refreshResult.data) {
+                refreshedTokenData = refreshResult.data;
                 currentToken = refreshedTokenData.accessToken;
                 // Tenta novamente com o novo token
                 const newHeaders = {
