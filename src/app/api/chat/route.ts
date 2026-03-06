@@ -5,7 +5,7 @@ import { refreshContaAzulToken, TokenData } from '@/lib/token-utils';
 // Força renderização dinâmica (necessário para cookies() funcionar)
 export const dynamic = 'force-dynamic';
 
-const CONTA_AZUL_API = 'https://api.contaazul.com';
+const CONTA_AZUL_API = 'https://api-v2.contaazul.com';
 
 // Interfaces para tipagem dos dados do Conta Azul
 interface FinancialItem {
@@ -57,36 +57,36 @@ async function fetchContaAzulData(token: string): Promise<{ context: string, new
 
     const results: Record<string, unknown> = {};
 
-    // 1. Vendas
+    // 1. Vendas (nova API v2)
     try {
-        const res = await makeRequest(`/v1/sales?status=COMMITTED&emission_start=${dateFrom}&emission_end=${dateTo}&page=0&size=100`);
+        const res = await makeRequest(`/v1/venda/busca?dataEmissaoInicio=${dateFrom}&dataEmissaoFim=${dateTo}&pagina=0&tamanhoPagina=100`);
         const body = await res.text();
         if (res.ok) results.vendas = JSON.parse(body);
-        else results.vendasErro = `Status ${res.status}: ${body.substring(0, 100)}`;
+        else results.vendasErro = `Status ${res.status}: ${body.substring(0, 150)}`;
     } catch (e) { results.vendasErro = String(e); }
 
-    // 2. Recebíveis
+    // 2. Contas a Receber (nova API v2)
     try {
-        const res = await makeRequest(`/v1/receivables?status=PENDING&page=0&size=50`);
+        const res = await makeRequest(`/v1/financeiro/eventos-financeiros/contas-a-receber/buscar?pagina=0&tamanhoPagina=50`);
         const body = await res.text();
         if (res.ok) results.contasReceber = JSON.parse(body);
-        else results.contasReceberErro = `Status ${res.status}: ${body.substring(0, 100)}`;
+        else results.contasReceberErro = `Status ${res.status}: ${body.substring(0, 150)}`;
     } catch (e) { results.contasReceberErro = String(e); }
 
-    // 3. Pagáveis
+    // 3. Contas a Pagar (nova API v2)
     try {
-        const res = await makeRequest(`/v1/payables?status=PENDING&page=0&size=50`);
+        const res = await makeRequest(`/v1/financeiro/eventos-financeiros/contas-a-pagar/buscar?pagina=0&tamanhoPagina=50`);
         const body = await res.text();
         if (res.ok) results.contasPagar = JSON.parse(body);
-        else results.contasPagarErro = `Status ${res.status}: ${body.substring(0, 100)}`;
+        else results.contasPagarErro = `Status ${res.status}: ${body.substring(0, 150)}`;
     } catch (e) { results.contasPagarErro = String(e); }
 
-    // 4. Saldo
+    // 4. Contas Financeiras / Saldo (nova API v2)
     try {
-        const res = await makeRequest(`/v1/financial-accounts?page=0&size=20`);
+        const res = await makeRequest(`/v1/conta-financeira`);
         const body = await res.text();
         if (res.ok) results.contasFinanceiras = JSON.parse(body);
-        else results.contasFinanceirasErro = `Status ${res.status}: ${body.substring(0, 100)}`;
+        else results.contasFinanceirasErro = `Status ${res.status}: ${body.substring(0, 150)}`;
     } catch (e) { results.contasFinanceirasErro = String(e); }
 
     // Formatação do contexto para a IA

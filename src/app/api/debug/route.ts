@@ -4,7 +4,7 @@ import { refreshContaAzulToken } from '@/lib/token-utils';
 
 export const dynamic = 'force-dynamic';
 
-const CONTA_AZUL_API = 'https://api.contaazul.com';
+const CONTA_AZUL_API = 'https://api-v2.contaazul.com';
 
 export async function GET() {
     const cookieStore = cookies();
@@ -56,10 +56,10 @@ export async function GET() {
     };
 
     const [salesTest, receivablesTest, payablesTest, financialTest] = await Promise.all([
-        makeTest('/v1/sales?page=0&size=1'),
-        makeTest('/v1/receivables?page=0&size=1'),
-        makeTest('/v1/payables?page=0&size=1'),
-        makeTest('/v1/financial-accounts?page=0&size=1'),
+        makeTest('/v1/venda/busca?pagina=0&tamanhoPagina=1'),
+        makeTest('/v1/financeiro/eventos-financeiros/contas-a-receber/buscar?pagina=0&tamanhoPagina=1'),
+        makeTest('/v1/financeiro/eventos-financeiros/contas-a-pagar/buscar?pagina=0&tamanhoPagina=1'),
+        makeTest('/v1/conta-financeira'),
     ]);
 
     const responseData = {
