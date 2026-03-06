@@ -8,7 +8,7 @@ export async function GET(request: Request) {
         return NextResponse.json({ error: 'No authorization code provided' }, { status: 400 });
     }
 
-    const TOKEN_URL = process.env.CONTA_AZUL_TOKEN_URL || 'https://api.contaazul.com/oauth2/token';
+    const TOKEN_URL = process.env.CONTA_AZUL_TOKEN_URL || 'https://auth.contaazul.com/oauth2/token';
     const CLIENT_ID = process.env.CONTA_AZUL_CLIENT_ID;
     const CLIENT_SECRET = process.env.CONTA_AZUL_CLIENT_SECRET;
     const REDIRECT_URI = process.env.CONTA_AZUL_REDIRECT_URI;
@@ -24,8 +24,6 @@ export async function GET(request: Request) {
         params.append('grant_type', 'authorization_code');
         params.append('code', code);
         params.append('redirect_uri', REDIRECT_URI!);
-        params.append('client_id', CLIENT_ID);
-        params.append('client_secret', CLIENT_SECRET);
 
         const response = await fetch(TOKEN_URL, {
             method: 'POST',
