@@ -7,14 +7,20 @@ export const dynamic = 'force-dynamic';
 
 const CONTA_AZUL_API = 'https://api-v2.contaazul.com';
 
-// Interfaces para tipagem dos dados do Conta Azul
-interface FinancialItem {
-    value?: number;
-    balance?: number;
+// Interfaces para tipagem dos dados da nova API v2 do Conta Azul
+interface VendasResponse {
+    totais?: { total?: number; aprovado?: number; cancelado?: number; esperando_aprovacao?: number; };
+    quantidades?: { total?: number; aprovado?: number; };
+    itens?: Array<{ valor_total?: number; numero?: number; status?: string; cliente?: { nome?: string }; }>;
 }
-
-interface ApiResponseData {
-    data?: FinancialItem[];
+interface ContasFinanceirasResponse {
+    itens?: Array<{ id?: string; nome?: string; banco?: string; saldo_atual?: number; ativo?: boolean; tipo?: string; }>;
+    itens_totais?: number;
+}
+interface EventosFinanceirosResponse {
+    itens?: Array<{ valor?: number; valor_pendente?: number; data_vencimento?: string; descricao?: string; status?: string; }>;
+    totais?: { total?: number; pendente?: number; pago?: number; };
+    itens_totais?: number;
 }
 
 // Busca dados reais do Conta Azul usando o token Bearer autenticado
@@ -65,17 +71,17 @@ async function fetchContaAzulData(token: string): Promise<{ context: string, new
         else results.vendasErro = `Status ${res.status}: ${body.substring(0, 150)}`;
     } catch (e) { results.vendasErro = String(e); }
 
-    // 2. Contas a Receber (nova API v2)
+    // 2. Contas a Receber (nova API v2 — parâmetros obrigatórios de data)
     try {
-        const res = await makeRequest(`/v1/financeiro/eventos-financeiros/contas-a-receber/buscar?pagina=0&tamanhoPagina=50`);
+        const res = await makeRequest(`/v1/financeiro/eventos-financeiros/contas-a-receber/buscar?data_vencimento_de=${dateFrom}&data_vencimento_ate=${dateTo}&pagina=0&tamanhoPagina=50`);
         const body = await res.text();
         if (res.ok) results.contasReceber = JSON.parse(body);
         else results.contasReceberErro = `Status ${res.status}: ${body.substring(0, 150)}`;
     } catch (e) { results.contasReceberErro = String(e); }
 
-    // 3. Contas a Pagar (nova API v2)
+    // 3. Contas a Pagar (nova API v2 — parâmetros obrigatórios de data)
     try {
-        const res = await makeRequest(`/v1/financeiro/eventos-financeiros/contas-a-pagar/buscar?pagina=0&tamanhoPagina=50`);
+        const res = await makeRequest(`/v1/financeiro/eventos-financeiros/contas-a-pagar/buscar?data_vencimento_de=${dateFrom}&data_vencimento_ate=${dateTo}&pagina=0&tamanhoPagina=50`);
         const body = await res.text();
         if (res.ok) results.contasPagar = JSON.parse(body);
         else results.contasPagarErro = `Status ${res.status}: ${body.substring(0, 150)}`;
@@ -89,39 +95,71 @@ async function fetchContaAzulData(token: string): Promise<{ context: string, new
         else results.contasFinanceirasErro = `Status ${res.status}: ${body.substring(0, 150)}`;
     } catch (e) { results.contasFinanceirasErro = String(e); }
 
-    // Formatação do contexto para a IA
+    // Formatação do contexto para a IA — baseado na nova estrutura da API v2
     let context = `DADOS REAIS DO CONTA AZUL (Última atualização: ${today.toLocaleString('pt-BR')}):\n\n`;
 
-    // Processa Vendas
+    // Processa Vendas (nova estrutura: totais.total, quantidades.total)
     if (results.vendas && typeof results.vendas === 'object') {
-        const vendasData = results.vendas as ApiResponseData;
-        const items = vendasData.data || (Array.isArray(results.vendas) ? (results.vendas as FinancialItem[]) : []);
-        const total = items.reduce((sum: number, v: FinancialItem) => sum + (v.value || 0), 0);
-        context += `📊 VENDAS (30 dias): ${items.length} transações | Total: R$ ${total.toFixed(2)}\n`;
+        const v = results.vendas as VendasResponse;
+        const totalGeral = v.totais?.total ?? 0;
+        const qtdTotal = v.quantidades?.total ?? 0;
+        const qtdAprovado = v.quantidades?.aprovado ?? 0;
+        const totalAprovado = v.totais?.aprovado ?? 0;
+        context += `📊 VENDAS (30 dias):\n`;
+        context += `  - Total de vendas: ${qtdTotal} | Total: R$ ${totalGeral.toFixed(2)}\n`;
+        context += `  - Aprovadas: ${qtdAprovado} | R$ ${totalAprovado.toFixed(2)}\n`;
+        // Listar até 10 vendas individuais se disponível
+        if (v.itens && v.itens.length > 0) {
+            context += `  - Últimas vendas:\n`;
+            v.itens.slice(0, 10).forEach(item => {
+                context += `    • Venda #${item.numero || '?'} | ${item.cliente?.nome || 'Cliente'} | R$ ${(item.valor_total || 0).toFixed(2)} | ${item.status || ''}\n`;
+            });
+        }
+    } else if (results.vendasErro) {
+        context += `📊 VENDAS: Erro ao buscar (${results.vendasErro})\n`;
     }
 
-    // Processa Recebíveis
+    // Processa Contas a Receber (nova estrutura: itens[].valor, totais)
     if (results.contasReceber && typeof results.contasReceber === 'object') {
-        const receberData = results.contasReceber as ApiResponseData;
-        const items = receberData.data || (Array.isArray(results.contasReceber) ? (results.contasReceber as FinancialItem[]) : []);
-        const total = items.reduce((sum: number, v: FinancialItem) => sum + (v.value || 0), 0);
-        context += `💰 CONTAS A RECEBER: R$ ${total.toFixed(2)} (${items.length} pendentes)\n`;
+        const r = results.contasReceber as EventosFinanceirosResponse;
+        const totalPendente = r.totais?.pendente ?? r.itens?.reduce((s, i) => s + (i.valor_pendente ?? i.valor ?? 0), 0) ?? 0;
+        const count = r.itens_totais ?? r.itens?.length ?? 0;
+        context += `💰 CONTAS A RECEBER: R$ ${totalPendente.toFixed(2)} (${count} títulos)\n`;
+        if (r.itens && r.itens.length > 0) {
+            r.itens.slice(0, 5).forEach(item => {
+                context += `  • ${item.descricao || 'Recebível'} | R$ ${(item.valor_pendente ?? item.valor ?? 0).toFixed(2)} | Vence: ${item.data_vencimento || '?'} | ${item.status || ''}\n`;
+            });
+        }
+    } else if (results.contasReceberErro) {
+        context += `💰 CONTAS A RECEBER: Erro ao buscar (${results.contasReceberErro})\n`;
     }
 
-    // Processa Pagáveis
+    // Processa Contas a Pagar (nova estrutura: itens[].valor, totais)
     if (results.contasPagar && typeof results.contasPagar === 'object') {
-        const pagarData = results.contasPagar as ApiResponseData;
-        const items = pagarData.data || (Array.isArray(results.contasPagar) ? (results.contasPagar as FinancialItem[]) : []);
-        const total = items.reduce((sum: number, v: FinancialItem) => sum + (v.value || 0), 0);
-        context += `📉 CONTAS A PAGAR: R$ ${total.toFixed(2)} (${items.length} pendentes)\n`;
+        const p = results.contasPagar as EventosFinanceirosResponse;
+        const totalPendente = p.totais?.pendente ?? p.itens?.reduce((s, i) => s + (i.valor_pendente ?? i.valor ?? 0), 0) ?? 0;
+        const count = p.itens_totais ?? p.itens?.length ?? 0;
+        context += `📉 CONTAS A PAGAR: R$ ${totalPendente.toFixed(2)} (${count} títulos)\n`;
+        if (p.itens && p.itens.length > 0) {
+            p.itens.slice(0, 5).forEach(item => {
+                context += `  • ${item.descricao || 'Pagável'} | R$ ${(item.valor_pendente ?? item.valor ?? 0).toFixed(2)} | Vence: ${item.data_vencimento || '?'} | ${item.status || ''}\n`;
+            });
+        }
+    } else if (results.contasPagarErro) {
+        context += `📉 CONTAS A PAGAR: Erro ao buscar (${results.contasPagarErro})\n`;
     }
 
-    // Processa Saldo
+    // Processa Contas Financeiras (nova estrutura: itens[].saldo_atual)
     if (results.contasFinanceiras && typeof results.contasFinanceiras === 'object') {
-        const finData = results.contasFinanceiras as ApiResponseData;
-        const items = finData.data || (Array.isArray(results.contasFinanceiras) ? (results.contasFinanceiras as FinancialItem[]) : []);
-        const total = items.reduce((sum: number, c: FinancialItem) => sum + (c.balance || 0), 0);
-        context += `🏦 SALDO TOTAL: R$ ${total.toFixed(2)}\n`;
+        const f = results.contasFinanceiras as ContasFinanceirasResponse;
+        const ativas = (f.itens || []).filter(c => c.ativo !== false);
+        const saldoTotal = ativas.reduce((s, c) => s + (c.saldo_atual ?? 0), 0);
+        context += `🏦 SALDO TOTAL (contas ativas): R$ ${saldoTotal.toFixed(2)}\n`;
+        ativas.forEach(c => {
+            context += `  • ${c.nome || c.banco || 'Conta'} (${c.tipo || ''}): R$ ${(c.saldo_atual ?? 0).toFixed(2)}\n`;
+        });
+    } else if (results.contasFinanceirasErro) {
+        context += `🏦 SALDO: Erro ao buscar (${results.contasFinanceirasErro})\n`;
     }
 
     return { context, newToken: refreshedTokenData };
