@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 
 interface SettingsMenuProps {
     isOpen: boolean;
@@ -8,50 +8,48 @@ interface SettingsMenuProps {
 }
 
 export default function SettingsMenu({ isOpen, onClose }: SettingsMenuProps) {
-    const [credentials, setCredentials] = useState({
-        clientId: '',
-        clientSecret: '',
-        accessToken: '',
-        refreshToken: ''
-    });
+    const [accessToken, setAccessToken] = useState('');
+    const [refreshToken, setRefreshToken] = useState('');
+    const [status, setStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
+    const [message, setMessage] = useState('');
 
-    // Load current values from cookies/state on mount
-    useEffect(() => {
-        if (isOpen) {
-            const getCookie = (name: string) => {
-                const value = `; ${document.cookie}`;
-                const parts = value.split(`; ${name}=`);
-                if (parts.length === 2) return parts.pop()?.split(';').shift();
-                return '';
-            };
-
-            setCredentials({
-                clientId: '', // Can't easily get from client-side if HttpOnly
-                clientSecret: '',
-                accessToken: getCookie('contaazul_access_token') || '',
-                refreshToken: getCookie('contaazul_refresh_token') || ''
+    const handleSave = async () => {
+        if (!accessToken && !refreshToken) {
+            setStatus('error');
+            setMessage('Cole ao menos um token antes de salvar.');
+            return;
+        }
+        setStatus('saving');
+        setMessage('');
+        try {
+            const res = await fetch('/api/auth/set-token', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ accessToken, refreshToken }),
             });
-        }
-    }, [isOpen]);
 
-    const handleSave = () => {
-        // Function to set cookies
-        const setCookie = (name: string, value: string, days: number) => {
-            const date = new Date();
-            date.setTime(date.getTime() + (days * 24 * 60 * 60 * 1000));
-            document.cookie = `${name}=${value}; expires=${date.toUTCString()}; path=/; SameSite=Lax`;
-        };
-
-        if (credentials.accessToken) {
-            setCookie('contaazul_access_token', credentials.accessToken, 1 / 24); // 1 hour
+            if (res.ok) {
+                setStatus('success');
+                setMessage('✅ Tokens salvos! A IA já pode acessar seus dados.');
+                setTimeout(() => {
+                    onClose();
+                    window.location.reload();
+                }, 1500);
+            } else {
+                setStatus('error');
+                setMessage('❌ Erro ao salvar tokens. Tente novamente.');
+            }
+        } catch {
+            setStatus('error');
+            setMessage('❌ Erro de conexão. Tente novamente.');
         }
-        if (credentials.refreshToken) {
-            setCookie('contaazul_refresh_token', credentials.refreshToken, 30); // 30 days
-        }
+    };
 
-        alert('Configurações salvas localmente!');
-        onClose();
-        window.location.reload(); // Reload to apply changes in API calls
+    const handleClear = async () => {
+        await fetch('/api/auth/set-token', { method: 'DELETE' });
+        setStatus('success');
+        setMessage('✅ Tokens removidos.');
+        setTimeout(() => { onClose(); window.location.reload(); }, 1000);
     };
 
     if (!isOpen) return null;
@@ -60,39 +58,65 @@ export default function SettingsMenu({ isOpen, onClose }: SettingsMenuProps) {
         <div style={styles.overlay} onClick={onClose}>
             <div style={styles.modal} onClick={e => e.stopPropagation()}>
                 <div style={styles.header}>
-                    <h3 style={styles.title}>Configurações de Conexão</h3>
-                    <button style={styles.closeBtn} onClick={onClose}>&times;</button>
+                    <div>
+                        <h3 style={styles.title}>🔑 Conexão com Conta Azul</h3>
+                        <p style={styles.subtitle}>Insira seus tokens manualmente para conectar a conta.</p>
+                    </div>
+                    <button style={styles.closeBtn} onClick={onClose}>✕</button>
                 </div>
 
                 <div style={styles.body}>
+                    <div style={styles.howTo}>
+                        <strong>Como obter seus tokens:</strong>
+                        <ol style={{ marginTop: 8, paddingLeft: 20, lineHeight: 1.8 }}>
+                            <li>Acesse o Conta Azul e faça login.</li>
+                            <li>Abra o DevTools (F12) → aba <strong>Application</strong>.</li>
+                            <li>Em <strong>Cookies</strong>, copie os valores de <code>access_token</code> e <code>refresh_token</code>.</li>
+                        </ol>
+                    </div>
+
                     <div style={styles.section}>
-                        <label style={styles.label}>Conta Azul Access Token</label>
+                        <label style={styles.label}>Access Token <span style={{ color: '#f87171' }}>*</span></label>
                         <textarea
                             style={styles.textarea}
-                            value={credentials.accessToken}
-                            onChange={e => setCredentials({ ...credentials, accessToken: e.target.value })}
-                            placeholder="Cole o access_token aqui..."
+                            value={accessToken}
+                            onChange={e => setAccessToken(e.target.value)}
+                            placeholder="Cole o access_token aqui... (eyJ...)"
                         />
                     </div>
 
                     <div style={styles.section}>
-                        <label style={styles.label}>Conta Azul Refresh Token</label>
+                        <label style={styles.label}>Refresh Token <span style={{ color: '#94a3b8' }}>(opcional)</span></label>
                         <textarea
                             style={styles.textarea}
-                            value={credentials.refreshToken}
-                            onChange={e => setCredentials({ ...credentials, refreshToken: e.target.value })}
+                            value={refreshToken}
+                            onChange={e => setRefreshToken(e.target.value)}
                             placeholder="Cole o refresh_token aqui..."
                         />
                     </div>
 
-                    <div style={styles.info}>
-                        <p>ℹ️ Estes tokens são armazenados nos cookies do seu navegador para autenticar as requisições à API do Conta Azul.</p>
-                    </div>
+                    {message && (
+                        <div style={{
+                            ...styles.statusMsg,
+                            backgroundColor: status === 'success' ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)',
+                            color: status === 'success' ? '#4ade80' : '#f87171',
+                        }}>
+                            {message}
+                        </div>
+                    )}
                 </div>
 
                 <div style={styles.footer}>
-                    <button style={styles.cancelBtn} onClick={onClose}>Cancelar</button>
-                    <button style={styles.saveBtn} onClick={handleSave}>Vincular Credenciais</button>
+                    <button style={styles.clearBtn} onClick={handleClear} title="Remover tokens e desconectar">
+                        Desconectar
+                    </button>
+                    <button
+                        style={{ ...styles.saveBtn, opacity: status === 'saving' ? 0.7 : 1 }}
+                        onClick={handleSave}
+                        disabled={status === 'saving'}
+                    >
+                        {status === 'saving' ? 'Salvando...' : 'Conectar Conta Azul'}
+                    </button>
                 </div>
             </div>
         </div>
@@ -102,99 +126,71 @@ export default function SettingsMenu({ isOpen, onClose }: SettingsMenuProps) {
 const styles = {
     overlay: {
         position: 'fixed' as const,
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        backgroundColor: 'rgba(0, 0, 0, 0.8)',
+        top: 0, left: 0, right: 0, bottom: 0,
+        backgroundColor: 'rgba(0, 0, 0, 0.85)',
         backdropFilter: 'blur(8px)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
         zIndex: 1000,
     },
     modal: {
-        width: '90%',
-        maxWidth: '500px',
-        backgroundColor: '#161b22',
+        width: '90%', maxWidth: '540px',
+        backgroundColor: '#0d1117',
         borderRadius: '16px',
-        border: '1px solid rgba(255, 255, 255, 0.1)',
+        border: '1px solid rgba(255, 255, 255, 0.12)',
         overflow: 'hidden',
-        boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)',
+        boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.6)',
     },
     header: {
         padding: '20px 24px',
-        borderBottom: '1px solid rgba(255, 255, 255, 0.1)',
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
+        borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
+        display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start',
     },
-    title: {
-        margin: 0,
-        color: 'white',
-        fontSize: '1.25rem',
-    },
+    title: { margin: 0, color: 'white', fontSize: '1.1rem', fontWeight: 700 },
+    subtitle: { margin: '4px 0 0', color: '#94a3b8', fontSize: '0.8125rem' },
     closeBtn: {
-        background: 'none',
-        border: 'none',
+        background: 'none', border: 'none', color: '#94a3b8',
+        fontSize: '1.2rem', cursor: 'pointer', padding: '4px',
+    },
+    body: { padding: '20px 24px' },
+    howTo: {
+        padding: '12px 16px',
+        backgroundColor: 'rgba(59, 130, 246, 0.08)',
+        borderRadius: '10px',
+        border: '1px solid rgba(59, 130, 246, 0.2)',
         color: '#94a3b8',
-        fontSize: '1.5rem',
-        cursor: 'pointer',
-    },
-    body: {
-        padding: '24px',
-    },
-    section: {
+        fontSize: '0.8125rem',
         marginBottom: '20px',
     },
-    label: {
-        display: 'block',
-        color: '#94a3b8',
-        marginBottom: '8px',
-        fontSize: '0.875rem',
-    },
+    section: { marginBottom: '16px' },
+    label: { display: 'block', color: '#94a3b8', marginBottom: '8px', fontSize: '0.875rem' },
     textarea: {
-        width: '100%',
-        height: '80px',
-        backgroundColor: 'rgba(255, 255, 255, 0.05)',
+        width: '100%', height: '72px', boxSizing: 'border-box' as const,
+        backgroundColor: 'rgba(255, 255, 255, 0.04)',
         border: '1px solid rgba(255, 255, 255, 0.1)',
-        borderRadius: '8px',
-        color: 'white',
-        padding: '12px',
-        fontSize: '0.875rem',
-        outline: 'none',
-        resize: 'none' as const,
+        borderRadius: '8px', color: '#e2e8f0',
+        padding: '10px 12px', fontSize: '0.8125rem',
+        outline: 'none', resize: 'none' as const, fontFamily: 'monospace',
     },
-    info: {
-        padding: '12px',
-        backgroundColor: 'rgba(59, 130, 246, 0.1)',
-        borderRadius: '8px',
-        color: '#60a5fa',
-        fontSize: '0.8125rem',
+    statusMsg: {
+        padding: '10px 14px', borderRadius: '8px',
+        fontSize: '0.875rem', marginTop: '8px',
     },
     footer: {
         padding: '16px 24px',
-        borderTop: '1px solid rgba(255, 255, 255, 0.1)',
-        display: 'flex',
-        justifyContent: 'flex-end',
-        gap: '12px',
+        borderTop: '1px solid rgba(255, 255, 255, 0.08)',
+        display: 'flex', justifyContent: 'space-between', gap: '12px',
         backgroundColor: 'rgba(0, 0, 0, 0.2)',
     },
-    cancelBtn: {
-        padding: '10px 20px',
-        borderRadius: '8px',
-        border: '1px solid rgba(255, 255, 255, 0.1)',
-        background: 'none',
-        color: 'white',
-        cursor: 'pointer',
+    clearBtn: {
+        padding: '10px 16px', borderRadius: '8px',
+        border: '1px solid rgba(239, 68, 68, 0.3)',
+        background: 'rgba(239, 68, 68, 0.1)',
+        color: '#f87171', cursor: 'pointer', fontSize: '0.875rem',
     },
     saveBtn: {
-        padding: '10px 20px',
-        borderRadius: '8px',
-        border: 'none',
-        background: '#2563eb',
-        color: 'white',
-        fontWeight: '600' as const,
-        cursor: 'pointer',
-    }
+        padding: '10px 20px', borderRadius: '8px',
+        border: 'none', background: 'linear-gradient(135deg, #2563eb, #1d4ed8)',
+        color: 'white', fontWeight: 600 as const, cursor: 'pointer', fontSize: '0.875rem',
+        flex: 1,
+    },
 };
