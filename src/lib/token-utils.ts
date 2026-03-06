@@ -38,6 +38,8 @@ export async function refreshContaAzulToken(): Promise<RefreshResult> {
         const params = new URLSearchParams();
         params.append('grant_type', 'refresh_token');
         params.append('refresh_token', refreshToken);
+        params.append('client_id', CLIENT_ID);
+        params.append('client_secret', CLIENT_SECRET);
 
         const response = await fetch(TOKEN_URL, {
             method: 'POST',
