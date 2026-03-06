@@ -4,35 +4,20 @@ import { refreshContaAzulToken } from '@/lib/token-utils';
 
 export const dynamic = 'force-dynamic';
 
+const CONTA_AZUL_API = 'https://api.contaazul.com';
+
 export async function GET() {
     const cookieStore = cookies();
     let token = cookieStore.get('contaazul_access_token')?.value;
     const allCookies = cookieStore.getAll().map(c => c.name);
 
-    if (!token) {
-        return NextResponse.json({
-            status: 'NO_TOKEN',
-            cookies: allCookies,
-            message: 'Cookie contaazul_access_token não encontrado'
-        });
-    }
-
-    let refreshed = false;
     let refreshAttempted = false;
-    let refreshDiagnostic = null;
+    let refreshed = false;
+    let refreshDiagnostic: unknown = null;
 
-    const testApi = async (t: string) => {
-        return await fetch('https://api.contaazul.com/v1/sales?page=0&size=1', {
-            headers: {
-                'Authorization': `Bearer ${t}`,
-                'Content-Type': 'application/json',
-            }
-        });
-    };
-
-    let testRes = await testApi(token);
-
-    if (testRes.status === 401) {
+    if (!token) {
+        // Sem access_token - tentar refresh automático
+        console.log('[Debug] No access_token found. Attempting automatic refresh...');
         refreshAttempted = true;
         const result = await refreshContaAzulToken();
         refreshDiagnostic = result;
@@ -40,21 +25,57 @@ export async function GET() {
         if (result.success && result.data) {
             token = result.data.accessToken;
             refreshed = true;
-            testRes = await testApi(token);
+            console.log('[Debug] Token refreshed successfully!');
+        } else {
+            // Sem access_token e refresh falhou: retornar diagnóstico
+            return NextResponse.json({
+                status: 'NO_TOKEN_AND_REFRESH_FAILED',
+                cookies: allCookies,
+                refreshAttempted,
+                refreshed,
+                refreshDiagnostic,
+                message: 'Precisa autenticar novamente em /api/auth/contaazul'
+            });
         }
     }
 
-    const testBody = await testRes.text();
+    // Token em mãos - testar vários endpoints
+    const makeTest = async (endpoint: string) => {
+        try {
+            const res = await fetch(`${CONTA_AZUL_API}${endpoint}`, {
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json',
+                }
+            });
+            const body = await res.text();
+            return { status: res.status, body: body.substring(0, 200) };
+        } catch (e) {
+            return { status: 'error', body: String(e) };
+        }
+    };
+
+    const [salesTest, receivablesTest, payablesTest, financialTest] = await Promise.all([
+        makeTest('/v1/sales?page=0&size=1'),
+        makeTest('/v1/receivables?page=0&size=1'),
+        makeTest('/v1/payables?page=0&size=1'),
+        makeTest('/v1/financial-accounts?page=0&size=1'),
+    ]);
 
     const responseData = {
         status: 'TOKEN_PROCESSED',
-        initialTokenLength: cookieStore.get('contaazul_access_token')?.value?.length,
+        tokenPreview: token?.substring(0, 30) + '...',
+        tokenLength: token?.length,
         refreshAttempted,
         refreshed,
         refreshDiagnostic,
-        salesApiStatus: testRes.status,
-        salesApiResponse: testBody.substring(0, 500),
-        cookies: allCookies
+        cookies: allCookies,
+        endpointTests: {
+            sales: salesTest,
+            receivables: receivablesTest,
+            payables: payablesTest,
+            financialAccounts: financialTest,
+        }
     };
 
     const response = NextResponse.json(responseData);

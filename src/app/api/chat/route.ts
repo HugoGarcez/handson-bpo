@@ -139,13 +139,26 @@ export async function POST(req: NextRequest) {
         const cookieStore = cookies();
         const token = cookieStore.get('contaazul_access_token')?.value;
 
-        let financialContext = 'O usuário não autenticou o Conta Azul.';
+        let financialContext = 'O usuário não autenticou o Conta Azul. Peça para o usuário visitar /api/auth/contaazul para conectar.';
         let refreshedData: TokenData | undefined = undefined;
 
         if (token) {
             const result = await fetchContaAzulData(token);
             financialContext = result.context;
             refreshedData = result.newToken;
+        } else {
+            // Sem access_token - tentar usar o refresh_token para obter um novo
+            console.log('[Chat] No access_token found, attempting refresh...');
+            const refreshResult = await refreshContaAzulToken();
+            if (refreshResult.success && refreshResult.data) {
+                console.log('[Chat] Refresh successful, fetching data with new token');
+                refreshedData = refreshResult.data;
+                const result = await fetchContaAzulData(refreshResult.data.accessToken);
+                financialContext = result.context;
+                if (result.newToken) refreshedData = result.newToken;
+            } else {
+                console.log('[Chat] Refresh failed:', refreshResult.error);
+            }
         }
 
         const systemPrompt = `Você é um assistente financeiro premium integrado ao Conta Azul. Responda em português do Brasil.
