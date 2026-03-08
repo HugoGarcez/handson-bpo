@@ -16,8 +16,7 @@ export async function GET() {
     let refreshDiagnostic: unknown = null;
 
     if (!token) {
-        // Sem access_token - tentar refresh automático
-        console.log('[Debug] No access_token found. Attempting automatic refresh...');
+        console.log('[Debug] Sem access_token. Tentando refresh...');
         refreshAttempted = true;
         const result = await refreshContaAzulToken();
         refreshDiagnostic = result;
@@ -25,9 +24,7 @@ export async function GET() {
         if (result.success && result.data) {
             token = result.data.accessToken;
             refreshed = true;
-            console.log('[Debug] Token refreshed successfully!');
         } else {
-            // Sem access_token e refresh falhou: retornar diagnóstico
             return NextResponse.json({
                 status: 'NO_TOKEN_AND_REFRESH_FAILED',
                 cookies: allCookies,
@@ -39,26 +36,36 @@ export async function GET() {
         }
     }
 
-    // Token em mãos - testar vários endpoints
+    // Retorna JSON real completo (sem truncar) para diagnóstico de campos
     const makeTest = async (endpoint: string) => {
         try {
             const res = await fetch(`${CONTA_AZUL_API}${endpoint}`, {
                 headers: {
                     'Authorization': `Bearer ${token}`,
                     'Content-Type': 'application/json',
+                    'Accept': 'application/json',
                 }
             });
             const body = await res.text();
-            return { status: res.status, body: body.substring(0, 200) };
+            let parsed: unknown = null;
+            try { parsed = JSON.parse(body); } catch { /* ignore */ }
+            return { status: res.status, rawBody: body.substring(0, 2000), parsed };
         } catch (e) {
-            return { status: 'error', body: String(e) };
+            return { status: 'error', rawBody: String(e), parsed: null };
         }
     };
 
+    const today = new Date();
+    const thirtyDaysAgo = new Date(today);
+    thirtyDaysAgo.setDate(today.getDate() - 30);
+    const dateFrom = thirtyDaysAgo.toISOString().split('T')[0];
+    const dateTo = today.toISOString().split('T')[0];
+
     const [salesTest, receivablesTest, payablesTest, financialTest] = await Promise.all([
-        makeTest('/v1/venda/busca?pagina=0&tamanhoPagina=1'),
-        makeTest('/v1/financeiro/eventos-financeiros/contas-a-receber/buscar?pagina=0&tamanhoPagina=1'),
-        makeTest('/v1/financeiro/eventos-financeiros/contas-a-pagar/buscar?pagina=0&tamanhoPagina=1'),
+        // Busca 3 vendas com filtro de data para ver a estrutura real dos campos
+        makeTest(`/v1/venda/busca?dataEmissaoInicio=${dateFrom}&dataEmissaoFim=${dateTo}&pagina=0&tamanhoPagina=3`),
+        makeTest(`/v1/financeiro/eventos-financeiros/contas-a-receber/buscar?pagina=0&tamanhoPagina=2`),
+        makeTest(`/v1/financeiro/eventos-financeiros/contas-a-pagar/buscar?pagina=0&tamanhoPagina=2`),
         makeTest('/v1/conta-financeira'),
     ]);
 
@@ -70,6 +77,7 @@ export async function GET() {
         refreshed,
         refreshDiagnostic,
         cookies: allCookies,
+        // Dados completos para diagnóstico de campos
         endpointTests: {
             sales: salesTest,
             receivables: receivablesTest,
