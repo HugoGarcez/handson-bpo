@@ -14,6 +14,9 @@ const CA_API = 'https://api-v2.contaazul.com';
 // ═══════════════════════════════════════════════════════════════
 
 interface SituacaoObj { nome?: string; descricao?: string; }
+interface CategoriaObj { nome?: string; }
+interface CentroCustoObj { nome?: string; }
+
 interface VendaItem {
     numero?: number;
     total?: number;           // campo confirmado
@@ -28,6 +31,8 @@ interface EventoItem {
     data_vencimento?: string;
     situacao?: SituacaoObj | string;
     status?: string;
+    categorias?: CategoriaObj[];
+    centros_de_custo?: CentroCustoObj[];
 }
 interface ContaFinanceira {
     id?: string;
@@ -280,7 +285,10 @@ async function fetchContaAzulData(token: string): Promise<{ context: string; new
             receberItens.forEach(i => {
                 const valor = n(i.valor_pendente) || n(i.valor);
                 const sit = getSituacao(i as Record<string, unknown>);
-                ctx += `    • ${i.descricao ?? 'Recebível'} | ${brl(valor)} | Vence: ${i.data_vencimento ?? '?'} | ${sit}\n`;
+                const cat = i.categorias && i.categorias.length > 0 ? i.categorias.map(c => c.nome).join(', ') : '';
+                const cc = i.centros_de_custo && i.centros_de_custo.length > 0 ? i.centros_de_custo.map(c => c.nome).join(', ') : '';
+                const extra = [cat && `Cat: ${cat}`, cc && `Centro: ${cc}`].filter(Boolean).join(' | ');
+                ctx += `    • ${i.descricao ?? 'Recebível'} | ${brl(valor)} | Vence: ${i.data_vencimento ?? '?'} | ${sit}${extra ? ` | ${extra}` : ''}\n`;
             });
         }
         ctx += '\n';
@@ -307,7 +315,10 @@ async function fetchContaAzulData(token: string): Promise<{ context: string; new
             pagarItens.forEach(i => {
                 const valor = n(i.valor_pendente) || n(i.valor);
                 const sit = getSituacao(i as Record<string, unknown>);
-                ctx += `    • ${i.descricao ?? 'Pagável'} | ${brl(valor)} | Vence: ${i.data_vencimento ?? '?'} | ${sit}\n`;
+                const cat = i.categorias && i.categorias.length > 0 ? i.categorias.map(c => c.nome).join(', ') : '';
+                const cc = i.centros_de_custo && i.centros_de_custo.length > 0 ? i.centros_de_custo.map(c => c.nome).join(', ') : '';
+                const extra = [cat && `Cat: ${cat}`, cc && `Centro: ${cc}`].filter(Boolean).join(' | ');
+                ctx += `    • ${i.descricao ?? 'Pagável'} | ${brl(valor)} | Vence: ${i.data_vencimento ?? '?'} | ${sit}${extra ? ` | ${extra}` : ''}\n`;
             });
         }
         ctx += '\n';
@@ -371,6 +382,7 @@ REGRAS ABSOLUTAS:
 3. Cite valores exatos com centavos (ex: R$ 8.940.728,02), nomes de clientes, datas e situações tal como aparecem.
 4. Se perguntado sobre algo fora dos dados abaixo, diga claramente que a informação não está disponível nos dados recebidos.
 5. Ao sumarizar: some corretamente, não arredonde sem avisar, compare períodos apenas se ambos estiverem nos dados.
+6. DRE e RELATÓRIOS: Quando solicitado um DRE ou agrupamento de custos/despesas, utilize os campos "Cat:" (Categoria) e "Centro:" (Centro de Custo) listados ao lado de cada título a pagar/receber para classificar os valores em Receita, Deduções, Custos, Despesas Operacionais e Impostos.
 
 ════ DADOS REAIS DO CONTA AZUL ════
 ${financialContext}
