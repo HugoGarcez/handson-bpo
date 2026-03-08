@@ -56,16 +56,15 @@ export async function GET() {
     };
 
     const today = new Date();
-    const thirtyDaysAgo = new Date(today);
-    thirtyDaysAgo.setDate(today.getDate() - 30);
-    const dateFrom = thirtyDaysAgo.toISOString().split('T')[0];
-    const dateTo = today.toISOString().split('T')[0];
+    const d90ago = new Date(today); d90ago.setDate(today.getDate() - 90);
+    const d90fwd = new Date(today); d90fwd.setDate(today.getDate() + 90);
+    const d30ago = new Date(today); d30ago.setDate(today.getDate() - 30);
+    const fmt = (d: Date) => d.toISOString().split('T')[0];
 
     const [salesTest, receivablesTest, payablesTest, financialTest] = await Promise.all([
-        // Busca 3 vendas com filtro de data para ver a estrutura real dos campos
-        makeTest(`/v1/venda/busca?dataEmissaoInicio=${dateFrom}&dataEmissaoFim=${dateTo}&pagina=0&tamanhoPagina=3`),
-        makeTest(`/v1/financeiro/eventos-financeiros/contas-a-receber/buscar?pagina=0&tamanhoPagina=2`),
-        makeTest(`/v1/financeiro/eventos-financeiros/contas-a-pagar/buscar?pagina=0&tamanhoPagina=2`),
+        makeTest(`/v1/venda/busca?dataEmissaoInicio=${fmt(d30ago)}&dataEmissaoFim=${fmt(today)}&pagina=0&tamanhoPagina=3`),
+        makeTest(`/v1/financeiro/eventos-financeiros/contas-a-receber/buscar?data_vencimento_de=${fmt(d90ago)}&data_vencimento_ate=${fmt(d90fwd)}&pagina=0&tamanhoPagina=3`),
+        makeTest(`/v1/financeiro/eventos-financeiros/contas-a-pagar/buscar?data_vencimento_de=${fmt(d90ago)}&data_vencimento_ate=${fmt(d90fwd)}&pagina=0&tamanhoPagina=3`),
         makeTest('/v1/conta-financeira'),
     ]);
 

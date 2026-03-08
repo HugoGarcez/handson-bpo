@@ -2,313 +2,301 @@ import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { refreshContaAzulToken, TokenData } from '@/lib/token-utils';
 
-// Força renderização dinâmica (necessário para cookies() funcionar)
 export const dynamic = 'force-dynamic';
 
-const CONTA_AZUL_API = 'https://api-v2.contaazul.com';
+const CA_API = 'https://api-v2.contaazul.com';
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Tipos mínimos para tipagem segura
-// ──────────────────────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════
+//  CAMPO CONFIRMADOS VIA DEBUG (não alterar sem verificar API)
+//  Vendas:  item.total | item.situacao.nome | data.total_itens
+//  Contas:  item.valor | item.situacao.nome | item.data_vencimento
+//  Saldo:   /v1/conta-financeira/{id} retorna saldo_atual
+// ═══════════════════════════════════════════════════════════════
+
+interface SituacaoObj { nome?: string; descricao?: string; }
+interface VendaItem {
+    numero?: number;
+    total?: number;           // campo confirmado
+    data?: string;
+    cliente?: { nome?: string };
+    situacao?: SituacaoObj;   // status confirmado
+}
+interface EventoItem {
+    descricao?: string;
+    valor?: number;
+    valor_pendente?: number;
+    data_vencimento?: string;
+    situacao?: SituacaoObj | string;
+    status?: string;
+}
 interface ContaFinanceira {
     id?: string;
     nome?: string;
     banco?: string;
-    saldo_atual?: number;
-    ativo?: boolean;
     tipo?: string;
+    ativo?: boolean;
+    saldo_atual?: number;
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Busca dados reais do Conta Azul
-// ──────────────────────────────────────────────────────────────────────────────
 async function fetchContaAzulData(token: string): Promise<{ context: string; newToken?: TokenData }> {
     const today = new Date();
+    const fmt = (d: Date) => d.toISOString().split('T')[0];
 
-    const thirtyDaysAgo = new Date(today);
-    thirtyDaysAgo.setDate(today.getDate() - 30);
-
-    const ninetyDaysAgo = new Date(today);
-    ninetyDaysAgo.setDate(today.getDate() - 90);
-
-    const ninetyDaysAhead = new Date(today);
-    ninetyDaysAhead.setDate(today.getDate() + 90);
-
-    const dateFrom30 = thirtyDaysAgo.toISOString().split('T')[0];
-    const dateFrom90 = ninetyDaysAgo.toISOString().split('T')[0];
-    const dateTo = today.toISOString().split('T')[0];
-    const dateTo90Ahead = ninetyDaysAhead.toISOString().split('T')[0];
+    const d30ago = new Date(today); d30ago.setDate(today.getDate() - 30);
+    const d90ago = new Date(today); d90ago.setDate(today.getDate() - 90);
+    const d90fwd = new Date(today); d90fwd.setDate(today.getDate() + 90);
 
     let currentToken = token;
-    let refreshedTokenData: TokenData | undefined = undefined;
+    let refreshedTokenData: TokenData | undefined;
 
-    // Faz requisição com refresh automático em caso de 401
-    const makeRequest = async (url: string): Promise<Response> => {
-        const headers = {
-            'Authorization': `Bearer ${currentToken}`,
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-        };
-        let response = await fetch(url, { headers });
-
-        if (response.status === 401 && !refreshedTokenData) {
-            console.log(`[ContaAzul] 401 detectado. Tentando refresh do token...`);
-            const refreshResult = await refreshContaAzulToken();
-            if (refreshResult.success && refreshResult.data) {
-                refreshedTokenData = refreshResult.data;
-                currentToken = refreshedTokenData.accessToken;
-                response = await fetch(url, {
-                    headers: { ...headers, 'Authorization': `Bearer ${currentToken}` },
-                });
+    // Faz requisição com refresh automático em 401
+    const req = async (url: string): Promise<Response> => {
+        const hdrs = { 'Authorization': `Bearer ${currentToken}`, 'Accept': 'application/json', 'Content-Type': 'application/json' };
+        let r = await fetch(url, { headers: hdrs });
+        if (r.status === 401 && !refreshedTokenData) {
+            const rr = await refreshContaAzulToken();
+            if (rr.success && rr.data) {
+                refreshedTokenData = rr.data;
+                currentToken = rr.data.accessToken;
+                r = await fetch(url, { headers: { ...hdrs, 'Authorization': `Bearer ${currentToken}` } });
             }
         }
-        return response;
+        return r;
     };
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // fetchAllPages: varre todas as páginas PRESERVANDO os totais da raiz
-    // A API retorna totais agregados no nível raiz da resposta (não nos itens).
-    // Por isso salvamos os `totais` da PRIMEIRA página (já representam o total
-    // do período completo, independente de paginação).
-    // ─────────────────────────────────────────────────────────────────────────
-    const fetchAllPages = async (
-        buildUrl: (page: number, size: number) => string,
-        pageSize = 200
-    ): Promise<{
-        itens: Record<string, unknown>[];
+    // Paginação automática — lança erro se a primeira página falhar (assim o caller seta *Erro)
+    const fetchPages = async <T>(buildUrl: (p: number, s: number) => string, pageSize = 200): Promise<{
+        itens: T[];
         totais: Record<string, unknown>;
-        itensTotais: number;
+        totalItens: number;
     }> => {
         let page = 0;
-        const allItems: Record<string, unknown>[] = [];
-        // totais vêm da raiz e representam o período todo (não só a página)
+        const all: T[] = [];
         let rootTotais: Record<string, unknown> = {};
-        let itensTotais = 0;
+        let totalItens = 0;
 
         while (true) {
             const url = buildUrl(page, pageSize);
-            console.log(`[ContaAzul] GET pag=${page}: ${url}`);
+            console.log(`[CA] GET p${page}: ${url}`);
+            const r = await req(url);
 
-            let res: Response;
-            try {
-                res = await makeRequest(url);
-            } catch (e) {
-                console.error(`[ContaAzul] Erro de rede na pag ${page}:`, e);
+            if (!r.ok) {
+                const err = await r.text();
+                // Primeira página com erro: lança para que o try/catch externo capture
+                if (page === 0) throw new Error(`HTTP ${r.status}: ${err.substring(0, 200)}`);
+                console.warn(`[CA] p${page} erro ${r.status}, parando.`);
                 break;
             }
 
-            if (!res.ok) {
-                const errBody = await res.text();
-                console.warn(`[ContaAzul] HTTP ${res.status} na pag ${page}: ${errBody.substring(0, 300)}`);
-                break;
-            }
+            const data: Record<string, unknown> = await r.json();
 
-            const data: Record<string, unknown> = await res.json();
-
-            // Grava totais da raiz apenas na primeira página
             if (page === 0) {
-                if (data.totais && typeof data.totais === 'object') {
-                    rootTotais = data.totais as Record<string, unknown>;
-                }
-                if (typeof data.itens_totais === 'number') {
-                    itensTotais = data.itens_totais;
-                }
+                if (data.totais && typeof data.totais === 'object') rootTotais = data.totais as Record<string, unknown>;
+                // A API usa total_itens (vendas) ou itens_totais (outros)
+                totalItens = (data.total_itens as number) ?? (data.itens_totais as number) ?? 0;
             }
 
-            const itens = Array.isArray(data.itens) ? (data.itens as Record<string, unknown>[]) : [];
-            allItems.push(...itens);
+            const itens = Array.isArray(data.itens) ? (data.itens as T[]) : [];
+            all.push(...itens);
+            console.log(`[CA] p${page}: ${itens.length} itens | total: ${all.length}`);
 
-            console.log(`[ContaAzul] pag ${page}: ${itens.length} itens | acumulado: ${allItems.length}`);
-
-            // Critério de parada: última página ou sem itens
             if (itens.length === 0 || itens.length < pageSize) break;
-            if (page >= 19) {
-                console.warn(`[ContaAzul] Limite de 20 páginas atingido.`);
-                break;
-            }
-
+            if (page >= 19) { console.warn('[CA] Limite 20 páginas.'); break; }
             page++;
         }
 
-        if (itensTotais === 0) itensTotais = allItems.length;
-        return { itens: allItems, totais: rootTotais, itensTotais };
+        if (totalItens === 0) totalItens = all.length;
+        return { itens: all, totais: rootTotais, totalItens };
     };
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // 1. VENDAS — últimos 30 dias
-    // ─────────────────────────────────────────────────────────────────────────
-    let vendasData: Awaited<ReturnType<typeof fetchAllPages>> | null = null;
-    let vendasErro: string | undefined;
-    try {
-        vendasData = await fetchAllPages(
-            (page, size) =>
-                `${CONTA_AZUL_API}/v1/venda/busca?dataEmissaoInicio=${dateFrom30}&dataEmissaoFim=${dateTo}&pagina=${page}&tamanhoPagina=${size}`
-        );
-    } catch (e) {
-        vendasErro = String(e);
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // 2. CONTAS A RECEBER — 90 dias passados a 90 dias futuros
-    // ─────────────────────────────────────────────────────────────────────────
-    let receberData: Awaited<ReturnType<typeof fetchAllPages>> | null = null;
-    let receberErro: string | undefined;
-    try {
-        receberData = await fetchAllPages(
-            (page, size) =>
-                `${CONTA_AZUL_API}/v1/financeiro/eventos-financeiros/contas-a-receber/buscar?data_vencimento_de=${dateFrom90}&data_vencimento_ate=${dateTo90Ahead}&pagina=${page}&tamanhoPagina=${size}`
-        );
-    } catch (e) {
-        receberErro = String(e);
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // 3. CONTAS A PAGAR — 90 dias passados a 90 dias futuros
-    // ─────────────────────────────────────────────────────────────────────────
-    let pagarData: Awaited<ReturnType<typeof fetchAllPages>> | null = null;
-    let pagarErro: string | undefined;
-    try {
-        pagarData = await fetchAllPages(
-            (page, size) =>
-                `${CONTA_AZUL_API}/v1/financeiro/eventos-financeiros/contas-a-pagar/buscar?data_vencimento_de=${dateFrom90}&data_vencimento_ate=${dateTo90Ahead}&pagina=${page}&tamanhoPagina=${size}`
-        );
-    } catch (e) {
-        pagarErro = String(e);
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // 4. CONTAS FINANCEIRAS / SALDO (endpoint único, sem paginação)
-    // ─────────────────────────────────────────────────────────────────────────
-    let contasFinanceiras: { itens?: ContaFinanceira[] } | undefined;
-    let contasFinanceirasErro: string | undefined;
-    try {
-        const res = await makeRequest(`${CONTA_AZUL_API}/v1/conta-financeira`);
-        const body = await res.text();
-        if (res.ok) {
-            contasFinanceiras = JSON.parse(body);
-        } else {
-            contasFinanceirasErro = `Status ${res.status}: ${body.substring(0, 150)}`;
-        }
-    } catch (e) {
-        contasFinanceirasErro = String(e);
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Monta contexto para a IA
-    // Usa os totais da RAIZ da resposta sempre que disponíveis (são os valores
-    // reais e corretos do período, calculados pela Conta Azul).
-    // Para os itens, usa campos genéricos com fallbacks para cobrir variações
-    // de nome de campo entre endpoints da API.
-    // ─────────────────────────────────────────────────────────────────────────
-    const n = (v: unknown): number => (typeof v === 'number' ? v : 0);
+    const n = (v: unknown): number => (typeof v === 'number' && isFinite(v) ? v : 0);
     const s = (v: unknown): string => (typeof v === 'string' ? v : '');
-    const fmt = (v: unknown) => `R$ ${n(v).toFixed(2)}`;
+    const brl = (v: unknown) => `R$ ${n(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-    let context = `DADOS REAIS DO CONTA AZUL (Atualizado em: ${today.toLocaleString('pt-BR')}):\n\n`;
+    // Extrai nome de situacao (pode ser string ou objeto {nome, descricao})
+    const getSituacao = (item: Record<string, unknown>): string => {
+        const sit = item.situacao;
+        if (sit && typeof sit === 'object') return s((sit as SituacaoObj).descricao || (sit as SituacaoObj).nome);
+        if (typeof sit === 'string') return sit;
+        return s(item.status);
+    };
 
-    // ── Vendas ──
+    // ── 1. VENDAS (30 dias) ───────────────────────────────────────────────────
+    let vendasItens: VendaItem[] = [];
+    let vendasTotais: Record<string, unknown> = {};
+    let vendasTotal = 0;
+    let vendasErro = '';
+    try {
+        const v = await fetchPages<VendaItem>(
+            (p, s) => `${CA_API}/v1/venda/busca?dataEmissaoInicio=${fmt(d30ago)}&dataEmissaoFim=${fmt(today)}&pagina=${p}&tamanhoPagina=${s}`
+        );
+        vendasItens = v.itens;
+        vendasTotais = v.totais;
+        vendasTotal = v.totalItens;
+    } catch (e) { vendasErro = String(e); }
+
+    // ── 2. CONTAS A RECEBER (90d passados → 90d futuros) ─────────────────────
+    let receberItens: EventoItem[] = [];
+    let receberTotais: Record<string, unknown> = {};
+    let receberTotal = 0;
+    let receberErro = '';
+    try {
+        const r = await fetchPages<EventoItem>(
+            (p, sz) => `${CA_API}/v1/financeiro/eventos-financeiros/contas-a-receber/buscar?data_vencimento_de=${fmt(d90ago)}&data_vencimento_ate=${fmt(d90fwd)}&pagina=${p}&tamanhoPagina=${sz}`
+        );
+        receberItens = r.itens;
+        receberTotais = r.totais;
+        receberTotal = r.totalItens;
+    } catch (e) { receberErro = String(e); }
+
+    // ── 3. CONTAS A PAGAR (90d passados → 90d futuros) ───────────────────────
+    let pagarItens: EventoItem[] = [];
+    let pagarTotais: Record<string, unknown> = {};
+    let pagarTotal = 0;
+    let pagarErro = '';
+    try {
+        const p = await fetchPages<EventoItem>(
+            (pg, sz) => `${CA_API}/v1/financeiro/eventos-financeiros/contas-a-pagar/buscar?data_vencimento_de=${fmt(d90ago)}&data_vencimento_ate=${fmt(d90fwd)}&pagina=${pg}&tamanhoPagina=${sz}`
+        );
+        pagarItens = p.itens;
+        pagarTotais = p.totais;
+        pagarTotal = p.totalItens;
+    } catch (e) { pagarErro = String(e); }
+
+    // ── 4. CONTAS FINANCEIRAS + SALDO INDIVIDUAL ──────────────────────────────
+    // O endpoint de lista não retorna saldo_atual; é preciso buscar cada conta individualmente
+    let contas: ContaFinanceira[] = [];
+    let contasErro = '';
+    try {
+        const r = await req(`${CA_API}/v1/conta-financeira`);
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const data: { itens?: ContaFinanceira[] } = await r.json();
+        const ativas = (data.itens ?? []).filter(c => c.ativo !== false);
+
+        // Busca saldo de cada conta em paralelo via endpoint individual
+        contas = await Promise.all(
+            ativas.map(async (conta) => {
+                if (!conta.id) return conta;
+                try {
+                    const dr = await req(`${CA_API}/v1/conta-financeira/${conta.id}`);
+                    if (dr.ok) {
+                        const detail: ContaFinanceira = await dr.json();
+                        return { ...conta, saldo_atual: detail.saldo_atual ?? 0 };
+                    }
+                } catch { /* ignora */ }
+                return { ...conta, saldo_atual: 0 };
+            })
+        );
+    } catch (e) { contasErro = String(e); }
+
+    // ── MONTA CONTEXTO PARA A IA ──────────────────────────────────────────────
+    let ctx = `DADOS REAIS DO CONTA AZUL ERP (${today.toLocaleString('pt-BR')}):\n\n`;
+
+    // Vendas
     if (vendasErro) {
-        context += `📊 VENDAS: Erro ao buscar (${vendasErro})\n`;
-    } else if (vendasData) {
-        const t = vendasData.totais;
-        // totais da raiz: os campos exatos dependem da versão da API
-        // tentamos várias variações para ser robusto
-        const totalValor = n(t.total) || n(t.valor_total) || n(t.faturamento);
-        const totalAprov = n(t.aprovado) || n(t.valor_aprovado);
-        const qtdTotal = n(t.quantidade_total) || n((t.quantidades as Record<string, unknown>)?.total) || vendasData.itensTotais;
-        const qtdAprov = n((t.quantidades as Record<string, unknown>)?.aprovado) || n(t.quantidade_aprovada);
+        ctx += `📊 VENDAS: ERRO — ${vendasErro}\n`;
+    } else {
+        // totais vêm da raiz da resposta (calculado pela Conta Azul para o período inteiro)
+        const tFat = n(vendasTotais.total);
+        const tAprov = n(vendasTotais.aprovado);
+        const tCanc = n(vendasTotais.cancelado);
+        const tPend = n(vendasTotais.esperando_aprovacao);
+        const qtd = vendasTotal;
+        const qtdAprov = n((vendasTotais.quantidades as Record<string, unknown>)?.aprovado);
+        const qtdPend = n((vendasTotais.quantidades as Record<string, unknown>)?.esperando_aprovacao);
 
-        context += `📊 VENDAS (últimos 30 dias):\n`;
-        context += `  - Quantidade total: ${qtdTotal} vendas\n`;
-        context += `  - Valor total faturado: ${fmt(totalValor)}\n`;
-        if (totalAprov > 0 || qtdAprov > 0) {
-            context += `  - Aprovadas: ${qtdAprov} vendas | ${fmt(totalAprov)}\n`;
-        }
+        ctx += `📊 VENDAS (últimos 30 dias):\n`;
+        ctx += `  Total: ${qtd} vendas | Faturado: ${brl(tFat)}\n`;
+        ctx += `  Aprovadas: ${qtdAprov} | ${brl(tAprov)}\n`;
+        if (tPend > 0) ctx += `  Aguardando aprovação: ${qtdPend} | ${brl(tPend)}\n`;
+        if (tCanc > 0) ctx += `  Canceladas: ${brl(tCanc)}\n`;
 
-        if (vendasData.itens.length > 0) {
-            context += `  - Lista de vendas:\n`;
-            vendasData.itens.forEach(item => {
-                // tenta vários nomes de campo para valor
-                const valor = n(item.valor_total) || n(item.valor) || n(item.total);
-                const numero = item.numero ?? item.id ?? '?';
-                const cliente = (item.cliente as Record<string, unknown>)?.nome ?? item.cliente ?? '-';
-                const status = s(item.status);
-                context += `    • Venda #${numero} | ${cliente} | ${fmt(valor)} | ${status}\n`;
+        if (vendasItens.length > 0) {
+            ctx += `  Detalhes das vendas:\n`;
+            vendasItens.forEach(item => {
+                const valor = n(item.total);  // campo confirmado = "total"
+                const sit = item.situacao ? s(item.situacao.descricao || item.situacao.nome) : '';
+                ctx += `    • #${item.numero ?? '?'} | ${item.cliente?.nome ?? '-'} | ${brl(valor)} | ${sit} | ${item.data ?? ''}\n`;
             });
         }
+        ctx += '\n';
     }
 
-    // ── Contas a Receber ──
+    // Contas a Receber
     if (receberErro) {
-        context += `💰 CONTAS A RECEBER: Erro ao buscar (${receberErro})\n`;
-    } else if (receberData) {
-        const t = receberData.totais;
-        const totalGeral = n(t.total) || n(t.valor_total);
-        const totalPendente = n(t.pendente) || n(t.valor_pendente) || n(t.a_receber);
+        ctx += `💰 CONTAS A RECEBER: ERRO — ${receberErro}\n`;
+    } else {
+        // Usa totais da raiz quando disponíveis; senão calcula dos itens
+        const tTotal = n(receberTotais.total) || receberItens.reduce((s, i) => s + n(i.valor), 0);
+        const tPend = n(receberTotais.pendente) || receberItens.filter(i => getSituacao(i as Record<string, unknown>) !== 'Pago').reduce((s, i) => s + (n(i.valor_pendente) || n(i.valor)), 0);
+        const tPago = n(receberTotais.pago);
+        const vencidos = receberItens.filter(i => i.data_vencimento && i.data_vencimento < fmt(today) && getSituacao(i as Record<string, unknown>).toLowerCase() !== 'pago');
 
-        context += `💰 CONTAS A RECEBER (90 dias):\n`;
-        context += `  - Total de títulos: ${receberData.itensTotais}\n`;
-        context += `  - Valor total: ${fmt(totalGeral || receberData.itens.reduce((s, i) => s + n(i.valor), 0))}\n`;
-        context += `  - Valor pendente: ${fmt(totalPendente || receberData.itens.filter(i => s(i.status) !== 'PAGO').reduce((s, i) => s + (n(i.valor_pendente) || n(i.valor)), 0))}\n`;
+        ctx += `💰 CONTAS A RECEBER (90 dias):\n`;
+        ctx += `  Total de títulos: ${receberTotal}\n`;
+        ctx += `  Valor total do período: ${brl(tTotal)}\n`;
+        ctx += `  Pendente (a receber): ${brl(tPend)}\n`;
+        if (tPago > 0) ctx += `  Já recebido: ${brl(tPago)}\n`;
+        ctx += `  Vencidos e não pagos: ${vencidos.length} títulos\n`;
 
-        if (receberData.itens.length > 0) {
-            context += `  - Títulos:\n`;
-            receberData.itens.forEach(item => {
-                const valor = n(item.valor_pendente) || n(item.valor);
-                const desc = s(item.descricao) || s(item.nome) || 'Recebível';
-                const venc = s(item.data_vencimento) || s(item.vencimento) || '?';
-                const status = s(item.status);
-                context += `    • ${desc} | ${fmt(valor)} | Vence: ${venc} | ${status}\n`;
+        if (receberItens.length > 0) {
+            ctx += `  Títulos:\n`;
+            receberItens.forEach(i => {
+                const valor = n(i.valor_pendente) || n(i.valor);
+                const sit = getSituacao(i as Record<string, unknown>);
+                ctx += `    • ${i.descricao ?? 'Recebível'} | ${brl(valor)} | Vence: ${i.data_vencimento ?? '?'} | ${sit}\n`;
             });
         }
+        ctx += '\n';
     }
 
-    // ── Contas a Pagar ──
+    // Contas a Pagar
     if (pagarErro) {
-        context += `📉 CONTAS A PAGAR: Erro ao buscar (${pagarErro})\n`;
-    } else if (pagarData) {
-        const t = pagarData.totais;
-        const totalGeral = n(t.total) || n(t.valor_total);
-        const totalPendente = n(t.pendente) || n(t.valor_pendente) || n(t.a_pagar);
+        ctx += `📉 CONTAS A PAGAR: ERRO — ${pagarErro}\n`;
+    } else {
+        const tTotal = n(pagarTotais.total) || pagarItens.reduce((s, i) => s + n(i.valor), 0);
+        const tPend = n(pagarTotais.pendente) || pagarItens.filter(i => getSituacao(i as Record<string, unknown>) !== 'Pago').reduce((s, i) => s + (n(i.valor_pendente) || n(i.valor)), 0);
+        const tPago = n(pagarTotais.pago);
+        const vencidos = pagarItens.filter(i => i.data_vencimento && i.data_vencimento < fmt(today) && getSituacao(i as Record<string, unknown>).toLowerCase() !== 'pago');
 
-        context += `📉 CONTAS A PAGAR (90 dias):\n`;
-        context += `  - Total de títulos: ${pagarData.itensTotais}\n`;
-        context += `  - Valor total: ${fmt(totalGeral || pagarData.itens.reduce((s, i) => s + n(i.valor), 0))}\n`;
-        context += `  - Valor pendente: ${fmt(totalPendente || pagarData.itens.filter(i => s(i.status) !== 'PAGO').reduce((s, i) => s + (n(i.valor_pendente) || n(i.valor)), 0))}\n`;
+        ctx += `📉 CONTAS A PAGAR (90 dias):\n`;
+        ctx += `  Total de títulos: ${pagarTotal}\n`;
+        ctx += `  Valor total do período: ${brl(tTotal)}\n`;
+        ctx += `  Pendente (a pagar): ${brl(tPend)}\n`;
+        if (tPago > 0) ctx += `  Já pago: ${brl(tPago)}\n`;
+        ctx += `  Vencidos e não pagos: ${vencidos.length} títulos\n`;
 
-        if (pagarData.itens.length > 0) {
-            context += `  - Títulos:\n`;
-            pagarData.itens.forEach(item => {
-                const valor = n(item.valor_pendente) || n(item.valor);
-                const desc = s(item.descricao) || s(item.nome) || 'Pagável';
-                const venc = s(item.data_vencimento) || s(item.vencimento) || '?';
-                const status = s(item.status);
-                context += `    • ${desc} | ${fmt(valor)} | Vence: ${venc} | ${status}\n`;
+        if (pagarItens.length > 0) {
+            ctx += `  Títulos:\n`;
+            pagarItens.forEach(i => {
+                const valor = n(i.valor_pendente) || n(i.valor);
+                const sit = getSituacao(i as Record<string, unknown>);
+                ctx += `    • ${i.descricao ?? 'Pagável'} | ${brl(valor)} | Vence: ${i.data_vencimento ?? '?'} | ${sit}\n`;
             });
         }
+        ctx += '\n';
     }
 
-    // ── Saldo / Contas Financeiras ──
-    if (contasFinanceirasErro) {
-        context += `🏦 SALDO: Erro ao buscar (${contasFinanceirasErro})\n`;
-    } else if (contasFinanceiras) {
-        const ativas = (contasFinanceiras.itens ?? []).filter(c => c.ativo !== false);
-        const saldoTotal = ativas.reduce((acc, c) => acc + (c.saldo_atual ?? 0), 0);
-        context += `🏦 SALDO TOTAL (contas ativas): ${fmt(saldoTotal)}\n`;
-        ativas.forEach(c => {
-            context += `  • ${c.nome ?? c.banco ?? 'Conta'} (${c.tipo ?? ''}): ${fmt(c.saldo_atual)}\n`;
+    // Saldo
+    if (contasErro) {
+        ctx += `🏦 SALDO: ERRO — ${contasErro}\n`;
+    } else {
+        const saldoTotal = contas.reduce((s, c) => s + n(c.saldo_atual), 0);
+        ctx += `🏦 SALDO (contas ativas):\n`;
+        ctx += `  Total consolidado: ${brl(saldoTotal)}\n`;
+        contas.forEach(c => {
+            ctx += `  • ${c.nome ?? c.banco} (${c.tipo ?? ''}): ${brl(c.saldo_atual)}\n`;
         });
+        ctx += '\n';
     }
 
-    // Adiciona log do contexto gerado para facilitar debug no servidor
-    console.log('[ContaAzul] Contexto gerado para IA:\n' + context);
-
-    return { context, newToken: refreshedTokenData };
+    console.log('[CA] Contexto final:\n' + ctx);
+    return { context: ctx, newToken: refreshedTokenData };
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// POST handler — recebe mensagens do chat e responde com streaming
-// ──────────────────────────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════
+//  POST — Chat com streaming
+// ════════════════════════════════════════════════════════════════
 export async function POST(req: NextRequest) {
     const OpenAI = (await import('openai')).default;
     const openai = new OpenAI({
@@ -321,37 +309,36 @@ export async function POST(req: NextRequest) {
         const cookieStore = cookies();
         const token = cookieStore.get('contaazul_access_token')?.value;
 
-        let financialContext = 'O usuário não autenticou o Conta Azul. Peça para o usuário visitar /api/auth/contaazul para conectar.';
-        let refreshedData: TokenData | undefined = undefined;
+        let financialContext = 'O usuário não autenticou o Conta Azul. Peça para visitar /api/auth/contaazul.';
+        let refreshedData: TokenData | undefined;
 
         if (token) {
-            const result = await fetchContaAzulData(token);
-            financialContext = result.context;
-            refreshedData = result.newToken;
+            const r = await fetchContaAzulData(token);
+            financialContext = r.context;
+            refreshedData = r.newToken;
         } else {
-            // Sem access_token — tenta refresh automático
             console.log('[Chat] Sem access_token, tentando refresh...');
-            const refreshResult = await refreshContaAzulToken();
-            if (refreshResult.success && refreshResult.data) {
-                console.log('[Chat] Refresh OK, buscando dados...');
-                refreshedData = refreshResult.data;
-                const result = await fetchContaAzulData(refreshResult.data.accessToken);
-                financialContext = result.context;
-                if (result.newToken) refreshedData = result.newToken;
-            } else {
-                console.log('[Chat] Refresh falhou:', refreshResult.error);
+            const rr = await refreshContaAzulToken();
+            if (rr.success && rr.data) {
+                refreshedData = rr.data;
+                const r = await fetchContaAzulData(rr.data.accessToken);
+                financialContext = r.context;
+                if (r.newToken) refreshedData = r.newToken;
             }
         }
 
-        const systemPrompt = `Você é um assistente financeiro integrado ao Conta Azul ERP. Responda SEMPRE em português do Brasil.
+        const systemPrompt = `Você é um especialista financeiro e contábil integrado ao Conta Azul ERP. Responda SEMPRE em português do Brasil.
 
-REGRAS OBRIGATÓRIAS:
-- Use APENAS os dados fornecidos abaixo. NUNCA invente, estime ou suponha valores.
-- Se um valor estiver zerado nos dados, informe que aparece R$ 0,00 nos dados recebidos e não tente explicar ou inventar motivos.
-- Se um campo não existir nos dados, diga que a informação não está disponível.
-- Cite os valores exatos, nomes e datas que aparecem nos dados abaixo.
+REGRAS ABSOLUTAS:
+1. USE APENAS os dados abaixo. JAMAIS invente, estime ou suponha valores não listados.
+2. Se um valor aparecer como R$ 0,00 nos dados, diga exatamente isso — não tente explicar ou inventar causas.
+3. Cite valores exatos com centavos (ex: R$ 8.940.728,02), nomes de clientes, datas e situações tal como aparecem.
+4. Se perguntado sobre algo fora dos dados abaixo, diga claramente que a informação não está disponível nos dados recebidos.
+5. Ao sumarizar: some corretamente, não arredonde sem avisar, compare períodos apenas se ambos estiverem nos dados.
 
-${financialContext}`;
+════ DADOS REAIS DO CONTA AZUL ════
+${financialContext}
+════════════════════════════════════`;
 
         const chatStream = await openai.chat.completions.create({
             model: 'c1/anthropic/claude-sonnet-4/v-20251230',
@@ -362,13 +349,13 @@ ${financialContext}`;
             ],
         });
 
-        const readableStream = new ReadableStream({
+        const stream = new ReadableStream({
             async start(controller) {
-                const encoder = new TextEncoder();
+                const enc = new TextEncoder();
                 try {
                     for await (const chunk of chatStream) {
-                        const text = chunk.choices[0]?.delta?.content || '';
-                        if (text) controller.enqueue(encoder.encode(text));
+                        const txt = chunk.choices[0]?.delta?.content || '';
+                        if (txt) controller.enqueue(enc.encode(txt));
                     }
                 } catch (e) {
                     console.error('Stream error:', e);
@@ -378,7 +365,7 @@ ${financialContext}`;
             },
         });
 
-        const response = new Response(readableStream, {
+        const response = new Response(stream, {
             headers: {
                 'Content-Type': 'text/plain; charset=utf-8',
                 'Transfer-Encoding': 'chunked',
@@ -386,24 +373,17 @@ ${financialContext}`;
             },
         });
 
-        // Atualiza cookies se houve refresh
         if (refreshedData) {
-            response.headers.append(
-                'Set-Cookie',
-                `contaazul_access_token=${refreshedData.accessToken}; HttpOnly; Secure; Path=/; Max-Age=${refreshedData.expiresIn}`
-            );
+            response.headers.append('Set-Cookie', `contaazul_access_token=${refreshedData.accessToken}; HttpOnly; Secure; Path=/; Max-Age=${refreshedData.expiresIn}`);
             if (refreshedData.refreshToken) {
-                response.headers.append(
-                    'Set-Cookie',
-                    `contaazul_refresh_token=${refreshedData.refreshToken}; HttpOnly; Secure; Path=/; Max-Age=${30 * 24 * 60 * 60}`
-                );
+                response.headers.append('Set-Cookie', `contaazul_refresh_token=${refreshedData.refreshToken}; HttpOnly; Secure; Path=/; Max-Age=${30 * 24 * 60 * 60}`);
             }
         }
 
         return response;
 
     } catch (error) {
-        console.error('TheSys Chat API Error:', error);
+        console.error('Chat API Error:', error);
         return NextResponse.json({ error: 'Erro na comunicação com a IA.' }, { status: 500 });
     }
 }
