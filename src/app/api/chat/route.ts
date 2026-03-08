@@ -27,12 +27,16 @@ interface VendaItem {
 interface EventoItem {
     descricao?: string;
     valor?: number;
+    total?: number;
     valor_pendente?: number;
     data_vencimento?: string;
     situacao?: SituacaoObj | string;
     status?: string;
+    status_traduzido?: string;
     categorias?: CategoriaObj[];
     centros_de_custo?: CentroCustoObj[];
+    cliente?: { nome?: string };
+    fornecedor?: { nome?: string };
 }
 interface ContaFinanceira {
     id?: string;
@@ -283,12 +287,13 @@ async function fetchContaAzulData(token: string): Promise<{ context: string; new
         if (receberItens.length > 0) {
             ctx += `  Títulos:\n`;
             receberItens.forEach(i => {
-                const valor = n(i.valor_pendente) || n(i.valor);
-                const sit = getSituacao(i as Record<string, unknown>);
+                const valor = n(i.valor_pendente) || n(i.valor) || n(i.total);
+                const sit = i.status_traduzido || getSituacao(i as Record<string, unknown>);
+                const cliente = i.cliente?.nome ? `Cliente: ${i.cliente.nome}` : '';
                 const cat = i.categorias && i.categorias.length > 0 ? i.categorias.map(c => c.nome).join(', ') : '';
                 const cc = i.centros_de_custo && i.centros_de_custo.length > 0 ? i.centros_de_custo.map(c => c.nome).join(', ') : '';
-                const extra = [cat && `Cat: ${cat}`, cc && `Centro: ${cc}`].filter(Boolean).join(' | ');
-                ctx += `    • ${i.descricao ?? 'Recebível'} | ${brl(valor)} | Vence: ${i.data_vencimento ?? '?'} | ${sit}${extra ? ` | ${extra}` : ''}\n`;
+                const extra = [cliente, cat && `Cat: ${cat}`, cc && `Centro: ${cc}`].filter(Boolean).join(' | ');
+                ctx += `    • ${i.descricao ?? 'Recebível'} | ${brl(valor)} | Vence: ${i.data_vencimento ?? '?'} | Status: ${sit}${extra ? ` | ${extra}` : ''}\n`;
             });
         }
         ctx += '\n';
@@ -313,12 +318,13 @@ async function fetchContaAzulData(token: string): Promise<{ context: string; new
         if (pagarItens.length > 0) {
             ctx += `  Títulos:\n`;
             pagarItens.forEach(i => {
-                const valor = n(i.valor_pendente) || n(i.valor);
-                const sit = getSituacao(i as Record<string, unknown>);
+                const valor = n(i.valor_pendente) || n(i.valor) || n(i.total);
+                const sit = i.status_traduzido || getSituacao(i as Record<string, unknown>);
+                const fornecedor = i.fornecedor?.nome ? `Fornecedor: ${i.fornecedor.nome}` : '';
                 const cat = i.categorias && i.categorias.length > 0 ? i.categorias.map(c => c.nome).join(', ') : '';
                 const cc = i.centros_de_custo && i.centros_de_custo.length > 0 ? i.centros_de_custo.map(c => c.nome).join(', ') : '';
-                const extra = [cat && `Cat: ${cat}`, cc && `Centro: ${cc}`].filter(Boolean).join(' | ');
-                ctx += `    • ${i.descricao ?? 'Pagável'} | ${brl(valor)} | Vence: ${i.data_vencimento ?? '?'} | ${sit}${extra ? ` | ${extra}` : ''}\n`;
+                const extra = [fornecedor, cat && `Cat: ${cat}`, cc && `Centro: ${cc}`].filter(Boolean).join(' | ');
+                ctx += `    • ${i.descricao ?? 'Pagável'} | ${brl(valor)} | Vence: ${i.data_vencimento ?? '?'} | Status: ${sit}${extra ? ` | ${extra}` : ''}\n`;
             });
         }
         ctx += '\n';
