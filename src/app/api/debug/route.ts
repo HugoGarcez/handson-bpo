@@ -55,6 +55,27 @@ export async function GET() {
         }
     };
 
+    // Testa endpoint via POST+JSON body
+    const makePost = async (endpoint: string, bodyObj: Record<string, unknown>) => {
+        try {
+            const res = await fetch(`${CONTA_AZUL_API}${endpoint}`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                },
+                body: JSON.stringify(bodyObj),
+            });
+            const body = await res.text();
+            let parsed: unknown = null;
+            try { parsed = JSON.parse(body); } catch { /* ignore */ }
+            return { status: res.status, rawBody: body.substring(0, 2000), parsed };
+        } catch (e) {
+            return { status: 'error', rawBody: String(e), parsed: null };
+        }
+    };
+
     const today = new Date();
     const d90ago = new Date(today); d90ago.setDate(today.getDate() - 90);
     const d90fwd = new Date(today); d90fwd.setDate(today.getDate() + 90);
@@ -63,8 +84,18 @@ export async function GET() {
 
     const [salesTest, receivablesTest, payablesTest, financialTest] = await Promise.all([
         makeTest(`/v1/venda/busca?dataEmissaoInicio=${fmt(d30ago)}&dataEmissaoFim=${fmt(today)}&pagina=0&tamanhoPagina=3`),
-        makeTest(`/v1/financeiro/eventos-financeiros/contas-a-receber/buscar?data_vencimento_de=${fmt(d90ago)}&data_vencimento_ate=${fmt(d90fwd)}&pagina=0&tamanhoPagina=3`),
-        makeTest(`/v1/financeiro/eventos-financeiros/contas-a-pagar/buscar?data_vencimento_de=${fmt(d90ago)}&data_vencimento_ate=${fmt(d90fwd)}&pagina=0&tamanhoPagina=3`),
+        makePost(`/v1/financeiro/eventos-financeiros/contas-a-receber/buscar`, {
+            data_vencimento_de: fmt(d90ago),
+            data_vencimento_ate: fmt(d90fwd),
+            pagina: 0,
+            tamanhoPagina: 3,
+        }),
+        makePost(`/v1/financeiro/eventos-financeiros/contas-a-pagar/buscar`, {
+            data_vencimento_de: fmt(d90ago),
+            data_vencimento_ate: fmt(d90fwd),
+            pagina: 0,
+            tamanhoPagina: 3,
+        }),
         makeTest('/v1/conta-financeira'),
     ]);
 

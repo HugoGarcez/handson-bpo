@@ -49,7 +49,7 @@ async function fetchContaAzulData(token: string): Promise<{ context: string; new
     let currentToken = token;
     let refreshedTokenData: TokenData | undefined;
 
-    // Faz requisição com refresh automático em 401
+    // GET com refresh automático em 401
     const req = async (url: string): Promise<Response> => {
         const hdrs = { 'Authorization': `Bearer ${currentToken}`, 'Accept': 'application/json', 'Content-Type': 'application/json' };
         let r = await fetch(url, { headers: hdrs });
@@ -64,26 +64,37 @@ async function fetchContaAzulData(token: string): Promise<{ context: string; new
         return r;
     };
 
-    // Paginação automática — lança erro se a primeira página falhar (assim o caller seta *Erro)
-    const fetchPages = async <T>(buildUrl: (p: number, s: number) => string, pageSize = 200): Promise<{
-        itens: T[];
-        totais: Record<string, unknown>;
-        totalItens: number;
-    }> => {
+    // POST com JSON body + refresh automático em 401
+    const reqPost = async (url: string, body: Record<string, unknown>): Promise<Response> => {
+        const hdrs = { 'Authorization': `Bearer ${currentToken}`, 'Accept': 'application/json', 'Content-Type': 'application/json' };
+        let r = await fetch(url, { method: 'POST', headers: hdrs, body: JSON.stringify(body) });
+        if (r.status === 401 && !refreshedTokenData) {
+            const rr = await refreshContaAzulToken();
+            if (rr.success && rr.data) {
+                refreshedTokenData = rr.data;
+                currentToken = rr.data.accessToken;
+                r = await fetch(url, { method: 'POST', headers: { ...hdrs, 'Authorization': `Bearer ${currentToken}` }, body: JSON.stringify(body) });
+            }
+        }
+        return r;
+    };
+
+    // Lógica de paginação compartilhada
+    const processPaginatedResponse = async <T>(
+        fetchFn: (page: number, pageSize: number) => Promise<Response>,
+        pageSize = 200
+    ): Promise<{ itens: T[]; totais: Record<string, unknown>; totalItens: number }> => {
         let page = 0;
         const all: T[] = [];
         let rootTotais: Record<string, unknown> = {};
         let totalItens = 0;
 
         while (true) {
-            const url = buildUrl(page, pageSize);
-            console.log(`[CA] GET p${page}: ${url}`);
-            const r = await req(url);
+            const r = await fetchFn(page, pageSize);
 
             if (!r.ok) {
                 const err = await r.text();
-                // Primeira página com erro: lança para que o try/catch externo capture
-                if (page === 0) throw new Error(`HTTP ${r.status}: ${err.substring(0, 200)}`);
+                if (page === 0) throw new Error(`HTTP ${r.status}: ${err.substring(0, 300)}`);
                 console.warn(`[CA] p${page} erro ${r.status}, parando.`);
                 break;
             }
@@ -92,13 +103,12 @@ async function fetchContaAzulData(token: string): Promise<{ context: string; new
 
             if (page === 0) {
                 if (data.totais && typeof data.totais === 'object') rootTotais = data.totais as Record<string, unknown>;
-                // A API usa total_itens (vendas) ou itens_totais (outros)
-                totalItens = (data.total_itens as number) ?? (data.itens_totais as number) ?? 0;
+                totalItens = (data.total_itens as number) || (data.itens_totais as number) || 0;
             }
 
             const itens = Array.isArray(data.itens) ? (data.itens as T[]) : [];
             all.push(...itens);
-            console.log(`[CA] p${page}: ${itens.length} itens | total: ${all.length}`);
+            console.log(`[CA] p${page} (${r.url?.split('?')[0].split('/').pop()}): ${itens.length} itens | total: ${all.length}`);
 
             if (itens.length === 0 || itens.length < pageSize) break;
             if (page >= 19) { console.warn('[CA] Limite 20 páginas.'); break; }
@@ -108,6 +118,20 @@ async function fetchContaAzulData(token: string): Promise<{ context: string; new
         if (totalItens === 0) totalItens = all.length;
         return { itens: all, totais: rootTotais, totalItens };
     };
+
+    // Paginação via GET (ex: vendas)
+    const fetchPages = <T>(buildUrl: (p: number, s: number) => string, pageSize = 200) =>
+        processPaginatedResponse<T>(
+            (p, s) => { console.log(`[CA] GET p${p}: ${buildUrl(p, s)}`); return req(buildUrl(p, s)); },
+            pageSize
+        );
+
+    // Paginação via POST com JSON body (ex: contas a receber/pagar — endpoints /buscar)
+    const fetchPostPages = <T>(url: string, buildBody: (p: number, s: number) => Record<string, unknown>, pageSize = 200) =>
+        processPaginatedResponse<T>(
+            (p, s) => { const body = buildBody(p, s); console.log(`[CA] POST p${p}: ${url}`, body); return reqPost(url, body); },
+            pageSize
+        );
 
     const n = (v: unknown): number => (typeof v === 'number' && isFinite(v) ? v : 0);
     const s = (v: unknown): string => (typeof v === 'string' ? v : '');
@@ -135,28 +159,40 @@ async function fetchContaAzulData(token: string): Promise<{ context: string; new
         vendasTotal = v.totalItens;
     } catch (e) { vendasErro = String(e); }
 
-    // ── 2. CONTAS A RECEBER (90d passados → 90d futuros) ─────────────────────
+    // ── 2. CONTAS A RECEBER — POST com JSON body (endpoint /buscar exige POST) ─
     let receberItens: EventoItem[] = [];
     let receberTotais: Record<string, unknown> = {};
     let receberTotal = 0;
     let receberErro = '';
     try {
-        const r = await fetchPages<EventoItem>(
-            (p, sz) => `${CA_API}/v1/financeiro/eventos-financeiros/contas-a-receber/buscar?data_vencimento_de=${fmt(d90ago)}&data_vencimento_ate=${fmt(d90fwd)}&pagina=${p}&tamanhoPagina=${sz}`
+        const r = await fetchPostPages<EventoItem>(
+            `${CA_API}/v1/financeiro/eventos-financeiros/contas-a-receber/buscar`,
+            (p, sz) => ({
+                data_vencimento_de: fmt(d90ago),
+                data_vencimento_ate: fmt(d90fwd),
+                pagina: p,
+                tamanhoPagina: sz,
+            })
         );
         receberItens = r.itens;
         receberTotais = r.totais;
         receberTotal = r.totalItens;
     } catch (e) { receberErro = String(e); }
 
-    // ── 3. CONTAS A PAGAR (90d passados → 90d futuros) ───────────────────────
+    // ── 3. CONTAS A PAGAR — POST com JSON body (endpoint /buscar exige POST) ───
     let pagarItens: EventoItem[] = [];
     let pagarTotais: Record<string, unknown> = {};
     let pagarTotal = 0;
     let pagarErro = '';
     try {
-        const p = await fetchPages<EventoItem>(
-            (pg, sz) => `${CA_API}/v1/financeiro/eventos-financeiros/contas-a-pagar/buscar?data_vencimento_de=${fmt(d90ago)}&data_vencimento_ate=${fmt(d90fwd)}&pagina=${pg}&tamanhoPagina=${sz}`
+        const p = await fetchPostPages<EventoItem>(
+            `${CA_API}/v1/financeiro/eventos-financeiros/contas-a-pagar/buscar`,
+            (pg, sz) => ({
+                data_vencimento_de: fmt(d90ago),
+                data_vencimento_ate: fmt(d90fwd),
+                pagina: pg,
+                tamanhoPagina: sz,
+            })
         );
         pagarItens = p.itens;
         pagarTotais = p.totais;
